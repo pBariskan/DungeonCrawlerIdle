@@ -1,28 +1,47 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, Alert,
+  ScrollView, Alert, Animated,
 } from 'react-native';
 import { useGameStore, RARITY_COLOR, type Item } from '../store/gameStore';
 import { startDungeonCombat } from '../services/dungeonCombat';
 
 const PIXEL = 'PressStart2P_400Regular';
 
-// ─── Pixel HP bar ──────────────────────────────────────────────────────────────
-function PixelHpBar({ pct, color }: { pct: number; color: string }) {
-  const BLOCKS = 8;
-  const filled = Math.max(0, Math.round((Math.max(0, Math.min(100, pct)) / 100) * BLOCKS));
+// ─── Smooth HP bar ─────────────────────────────────────────────────────────────
+function SmoothBar({ pct, color }: { pct: number; color: string }) {
+  const anim = useRef(new Animated.Value(pct)).current;
+
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: pct,
+      duration: 150,
+      useNativeDriver: false,
+    }).start();
+  }, [pct]);
+
+  const width = anim.interpolate({
+    inputRange: [0, 100],
+    outputRange: ['0%', '100%'],
+    extrapolate: 'clamp',
+  });
+
   return (
-    <View style={hp.row}>
-      {Array.from({ length: BLOCKS }).map((_, i) => (
-        <View key={i} style={[hp.block, { backgroundColor: i < filled ? color : '#2a3d6a' }]} />
-      ))}
+    <View style={sb.track}>
+      <Animated.View style={[sb.fill, { width, backgroundColor: color }]} />
     </View>
   );
 }
-const hp = StyleSheet.create({
-  row:   { flexDirection: 'row', gap: 3, marginTop: 8 },
-  block: { width: 11, height: 11 },
+const sb = StyleSheet.create({
+  track: {
+    alignSelf: 'stretch',
+    height: 10,
+    backgroundColor: '#1a2840',
+    borderRadius: 5,
+    overflow: 'hidden',
+    marginTop: 8,
+  },
+  fill: { height: '100%', borderRadius: 5 },
 });
 
 // ─── Item card ─────────────────────────────────────────────────────────────────
@@ -61,11 +80,52 @@ const ic = StyleSheet.create({
   stats:  { fontFamily: PIXEL, color: '#80a8e0', fontSize: 6 },
 });
 
+// ─── Hero stats panel (always visible) ────────────────────────────────────────
+function HeroStatsPanel({ hero }: { hero: { maxHp: number; attack: number; defense: number; level: number; gold: number } }) {
+  return (
+    <View style={hs.box}>
+      <View style={hs.row}>
+        <View style={hs.cell}>
+          <Text style={hs.label}>LV</Text>
+          <Text style={[hs.value, { color: '#f1c40f' }]}>{hero.level}</Text>
+        </View>
+        <View style={hs.sep} />
+        <View style={hs.cell}>
+          <Text style={hs.label}>HP</Text>
+          <Text style={[hs.value, { color: '#2ecc71' }]}>{hero.maxHp}</Text>
+        </View>
+        <View style={hs.sep} />
+        <View style={hs.cell}>
+          <Text style={hs.label}>ATK</Text>
+          <Text style={[hs.value, { color: '#e74c3c' }]}>{hero.attack}</Text>
+        </View>
+        <View style={hs.sep} />
+        <View style={hs.cell}>
+          <Text style={hs.label}>DEF</Text>
+          <Text style={[hs.value, { color: '#3498db' }]}>{hero.defense}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+const hs = StyleSheet.create({
+  box: {
+    backgroundColor: '#111d36',
+    borderTopWidth: 2, borderTopColor: '#2a3d6a',
+    paddingVertical: 10, paddingHorizontal: 4,
+  },
+  row:   { flexDirection: 'row', alignItems: 'center' },
+  cell:  { flex: 1, alignItems: 'center', gap: 4 },
+  sep:   { width: 1, height: 28, backgroundColor: '#2a3d6a' },
+  label: { fontFamily: 'PressStart2P_400Regular', color: '#4a6080', fontSize: 5, letterSpacing: 1 },
+  value: { fontFamily: 'PressStart2P_400Regular', fontSize: 9, letterSpacing: 1 },
+});
+
 // ─── Main screen ───────────────────────────────────────────────────────────────
 export default function DungeonScreen() {
   const {
     hero, enemy, dungeonLevel,
-    dungeonRunning, dungeonChestQueue, dungeonDeathFloor,
+    dungeonRunning, dungeonChestQueue, dungeonDeathFloor, dungeonPendingGold,
     checkpointFloor, openNextDungeonChest, returnToCheckpoint, resetGame,
   } = useGameStore();
 
@@ -136,19 +196,34 @@ export default function DungeonScreen() {
           {enemy.isBoss && <Text style={s.bossBadge}>★ BOSS ★</Text>}
           <Text style={[s.enemySprite, enemy.isBoss && s.bossSprite]}>{enemy.emoji}</Text>
           <Text style={s.enemyName}>{enemy.name.toUpperCase()}</Text>
-          <PixelHpBar pct={enemyHpPct} color={enemy.isBoss ? '#f39c12' : '#e74c3c'} />
+          <SmoothBar pct={enemyHpPct} color={enemy.isBoss ? '#f39c12' : '#e74c3c'} />
 
           <View style={s.divider} />
 
           <Text style={s.heroSprite}>🧙</Text>
           <Text style={s.heroName}>HERO LV.{hero.level}</Text>
-          <PixelHpBar pct={heroHpPct} color="#2ecc71" />
+          <SmoothBar pct={heroHpPct} color="#2ecc71" />
+        </View>
+
+        {/* Run progress bar */}
+        <View style={s.runBar}>
+          <View style={s.runBarItem}>
+            <Text style={s.runBarLabel}>GOLD EARNED</Text>
+            <Text style={s.runBarGold}>💰 {dungeonPendingGold}</Text>
+          </View>
+          <View style={s.runBarDivider} />
+          <View style={s.runBarItem}>
+            <Text style={s.runBarLabel}>CHESTS</Text>
+            <Text style={s.runBarChests}>📦 {dungeonChestQueue.length}</Text>
+          </View>
         </View>
 
         <View style={s.statusArea}>
           <Text style={s.inProgressText}>⏳ IN PROGRESS...</Text>
           <Text style={s.inProgressSub}>AUTO-FIGHTING — CHECK BACK LATER</Text>
         </View>
+
+        <HeroStatsPanel hero={hero} />
       </View>
     );
   }
@@ -186,6 +261,8 @@ export default function DungeonScreen() {
             </Text>
           </TouchableOpacity>
         </ScrollView>
+
+        <HeroStatsPanel hero={hero} />
       </View>
     );
   }
@@ -231,17 +308,9 @@ export default function DungeonScreen() {
             {screenPhase === 'deathSummary' ? 'RETRY DUNGEON' : 'START DUNGEON'}
           </Text>
         </TouchableOpacity>
-
-        <View style={s.heroStatsBox}>
-          <Text style={s.heroStatsTitle}>HERO STATS</Text>
-          <View style={s.statsGrid}>
-            <Text style={[s.statItem, { color: '#2ecc71' }]}>HP {hero.maxHp}</Text>
-            <Text style={[s.statItem, { color: '#e74c3c' }]}>ATK {hero.attack}</Text>
-            <Text style={[s.statItem, { color: '#3498db' }]}>DEF {hero.defense}</Text>
-            <Text style={[s.statItem, { color: '#f1c40f' }]}>LV {hero.level}</Text>
-          </View>
-        </View>
       </ScrollView>
+
+      <HeroStatsPanel hero={hero} />
     </View>
   );
 }
@@ -291,6 +360,20 @@ const s = StyleSheet.create({
   heroSprite:  { fontSize: 52, marginBottom: 6 },
   heroName:    { fontFamily: PIXEL, color: '#80a8e0', fontSize: 7, letterSpacing: 1, marginBottom: 4 },
 
+  // Run progress bar (gold + chests during active run)
+  runBar: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#0e1a30',
+    borderTopWidth: 1, borderTopColor: '#2a3d6a',
+    borderBottomWidth: 1, borderBottomColor: '#2a3d6a',
+    paddingVertical: 10,
+  },
+  runBarItem:    { flex: 1, alignItems: 'center', gap: 4 },
+  runBarDivider: { width: 1, height: 32, backgroundColor: '#2a3d6a' },
+  runBarLabel:   { fontFamily: PIXEL, color: '#4a6080', fontSize: 5, letterSpacing: 1 },
+  runBarGold:    { fontFamily: PIXEL, color: '#f1c40f', fontSize: 10, letterSpacing: 1 },
+  runBarChests:  { fontFamily: PIXEL, color: '#f39c12', fontSize: 10, letterSpacing: 1 },
+
   statusArea: {
     flex: 1, alignItems: 'center', justifyContent: 'center',
     gap: 10, backgroundColor: '#182848',
@@ -339,15 +422,4 @@ const s = StyleSheet.create({
   },
   checkpointInfoText: { fontFamily: PIXEL, color: '#4ad0ff', fontSize: 7, letterSpacing: 1 },
 
-  heroStatsBox: {
-    alignSelf: 'stretch',
-    backgroundColor: '#182848',
-    borderTopWidth: 2, borderLeftWidth: 2, borderBottomWidth: 4, borderRightWidth: 4,
-    borderTopColor: '#3d5ca8', borderLeftColor: '#3d5ca8',
-    borderBottomColor: '#0a1838', borderRightColor: '#0a1838',
-    padding: 16,
-  },
-  heroStatsTitle: { fontFamily: PIXEL, color: '#e0c97f', fontSize: 7, letterSpacing: 1, marginBottom: 12, textAlign: 'center' },
-  statsGrid:      { flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'center' },
-  statItem:       { fontFamily: PIXEL, fontSize: 8, letterSpacing: 1 },
 });

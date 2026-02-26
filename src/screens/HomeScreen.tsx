@@ -85,21 +85,41 @@ function buildShooterEnemy(wave: number): ShooterEnemy {
   };
 }
 
-// ── Pixel HP bar ──────────────────────────────────────────────────────────────
-function PixelBar({ pct, color }: { pct: number; color: string }) {
-  const BLOCKS = 8;
-  const filled = Math.max(0, Math.round(Math.max(0, Math.min(100, pct)) / 100 * BLOCKS));
+// ── Smooth HP bar ─────────────────────────────────────────────────────────────
+function SmoothBar({ pct, color }: { pct: number; color: string }) {
+  const anim = useRef(new Animated.Value(pct)).current;
+
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: pct,
+      duration: 150,
+      useNativeDriver: false,
+    }).start();
+  }, [pct]);
+
+  const width = anim.interpolate({
+    inputRange: [0, 100],
+    outputRange: ['0%', '100%'],
+    extrapolate: 'clamp',
+  });
+
   return (
-    <View style={{ flexDirection: 'row', gap: 3 }}>
-      {Array.from({ length: BLOCKS }).map((_, i) => (
-        <View
-          key={i}
-          style={{ width: 11, height: 11, backgroundColor: i < filled ? color : '#1a2840' }}
-        />
-      ))}
+    <View style={sb.track}>
+      <Animated.View style={[sb.fill, { width, backgroundColor: color }]} />
     </View>
   );
 }
+const sb = StyleSheet.create({
+  track: {
+    alignSelf: 'stretch',
+    height: 10,
+    backgroundColor: '#1a2840',
+    borderRadius: 5,
+    overflow: 'hidden',
+    marginTop: 8,
+  },
+  fill: { height: '100%', borderRadius: 5 },
+});
 
 
 // ── Home Screen ───────────────────────────────────────────────────────────────
@@ -126,6 +146,7 @@ export default function HomeScreen() {
   const waveRef       = useRef(1);
   const bulletIdRef   = useRef(0);
   const canFireRef    = useRef(true);
+  const cooldownAnim  = useRef(new Animated.Value(1)).current;
   const moveInterval  = useRef<ReturnType<typeof setInterval> | null>(null);
   const fireInterval  = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -299,6 +320,14 @@ export default function HomeScreen() {
     canFireRef.current = false;
     setCanFire(false);
     spawnBulletFn.current(false);
+
+    cooldownAnim.setValue(0);
+    Animated.timing(cooldownAnim, {
+      toValue: 1,
+      duration: fireCooldownMs,
+      useNativeDriver: false,
+    }).start();
+
     setTimeout(() => {
       canFireRef.current = true;
       setCanFire(true);
@@ -396,11 +425,11 @@ export default function HomeScreen() {
       <View style={s.hpRow}>
         <View style={s.hpSide}>
           <Text style={s.hpLabel}>{enemy.isBoss ? '★ BOSS' : 'ENEMY'}</Text>
-          <PixelBar pct={enemyHpPct} color={enemy.isBoss ? '#f39c12' : '#e74c3c'} />
+          <SmoothBar pct={enemyHpPct} color={enemy.isBoss ? '#f39c12' : '#e74c3c'} />
         </View>
         <View style={s.hpSide}>
           <Text style={s.hpLabel}>HERO</Text>
-          <PixelBar pct={playerHpPct} color="#2ecc71" />
+          <SmoothBar pct={playerHpPct} color="#2ecc71" />
         </View>
       </View>
 
@@ -474,6 +503,19 @@ export default function HomeScreen() {
                 disabled={!canFire}
                 activeOpacity={0.75}
               >
+                <Animated.View
+                  pointerEvents="none"
+                  style={[
+                    StyleSheet.absoluteFillObject,
+                    {
+                      backgroundColor: 'rgba(255, 110, 20, 0.45)',
+                      top: cooldownAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['100%', '0%'],
+                      }),
+                    },
+                  ]}
+                />
                 <Text style={s.fireBtnEmoji}>🔥</Text>
               </TouchableOpacity>
             </View>
@@ -588,6 +630,7 @@ const s = StyleSheet.create({
     backgroundColor: '#6b1a0a',
     borderWidth: 4, borderColor: '#ff7744',
     alignItems: 'center', justifyContent: 'center',
+    overflow: 'hidden',
   },
   fireBtnOff:   { backgroundColor: '#2a1020', borderColor: '#441010' },
   fireBtnEmoji: { fontSize: 56 },

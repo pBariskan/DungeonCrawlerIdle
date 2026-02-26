@@ -198,6 +198,7 @@ interface GameState {
   dungeonRunning:    boolean;
   dungeonChestQueue: Item[][];
   dungeonDeathFloor: number | null;
+  dungeonPendingGold: number;
 
   setHero:        (partial: Partial<Hero>) => void;
   gainGold:       (amount: number) => void;
@@ -219,10 +220,11 @@ interface GameState {
   resetGame:          () => void;
 
   // Dungeon auto-run actions
-  startDungeonRun:      () => void;
-  stopDungeonRun:       (floor: number) => void;
-  addDungeonChest:      (items: Item[]) => void;
-  openNextDungeonChest: () => void;
+  startDungeonRun:       () => void;
+  stopDungeonRun:        (floor: number) => void;
+  addDungeonChest:       (items: Item[]) => void;
+  openNextDungeonChest:  () => void;
+  addDungeonPendingGold: (amount: number) => void;
 }
 
 const INITIAL_HERO: Hero = {
@@ -243,9 +245,10 @@ export const useGameStore = create<GameState>()(
   hpUpgradeCost:   40,
   heroExp:         0,
   fragments:       { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 },
-  dungeonRunning:    false,
-  dungeonChestQueue: [],
-  dungeonDeathFloor: null,
+  dungeonRunning:     false,
+  dungeonChestQueue:  [],
+  dungeonDeathFloor:  null,
+  dungeonPendingGold: 0,
 
   setHero: (partial) =>
     set(s => ({ hero: { ...s.hero, ...partial } })),
@@ -377,13 +380,14 @@ export const useGameStore = create<GameState>()(
     })),
 
   startDungeonRun: () =>
-    set({ dungeonRunning: true, dungeonDeathFloor: null }),
+    set({ dungeonRunning: true, dungeonDeathFloor: null, dungeonPendingGold: 0 }),
 
   stopDungeonRun: (floor) =>
     set(s => ({
-      dungeonRunning:    false,
-      dungeonDeathFloor: floor,
-      hero:              { ...s.hero, hp: 0 },
+      dungeonRunning:     false,
+      dungeonDeathFloor:  floor,
+      dungeonPendingGold: 0,
+      hero:               { ...s.hero, hp: 0, gold: s.hero.gold + s.dungeonPendingGold },
     })),
 
   addDungeonChest: (items) =>
@@ -398,6 +402,9 @@ export const useGameStore = create<GameState>()(
       };
     }),
 
+  addDungeonPendingGold: (amount) =>
+    set(s => ({ dungeonPendingGold: s.dungeonPendingGold + amount })),
+
   resetGame: () =>
     set({
       hero:              { ...INITIAL_HERO },
@@ -411,9 +418,10 @@ export const useGameStore = create<GameState>()(
       hpUpgradeCost:     40,
       heroExp:           0,
       fragments:         { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 },
-      dungeonRunning:    false,
-      dungeonChestQueue: [],
-      dungeonDeathFloor: null,
+      dungeonRunning:     false,
+      dungeonChestQueue:  [],
+      dungeonDeathFloor:  null,
+      dungeonPendingGold: 0,
     }),
   }),
   {
@@ -429,8 +437,9 @@ export const useGameStore = create<GameState>()(
       hpUpgradeCost:     s.hpUpgradeCost,
       heroExp:           s.heroExp,
       fragments:         s.fragments,
-      dungeonChestQueue: s.dungeonChestQueue,
-      dungeonDeathFloor: s.dungeonDeathFloor,
+      dungeonChestQueue:  s.dungeonChestQueue,
+      dungeonDeathFloor:  s.dungeonDeathFloor,
+      dungeonPendingGold: s.dungeonPendingGold,
     }),
   }
 ));
