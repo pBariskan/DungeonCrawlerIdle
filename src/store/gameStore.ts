@@ -154,9 +154,9 @@ export interface Enemy {
 }
 
 function buildEnemy(level: number): Enemy {
-  const isBoss = level % 5 === 0;
+  const isBoss = level % 20 === 0;
   if (isBoss) {
-    const bi = Math.floor(level / 5) - 1;
+    const bi = Math.floor(level / 20) - 1;
     const hp = (20 + level * 10) * 3;
     return {
       name:       BOSS_NAMES[bi % BOSS_NAMES.length],
@@ -194,6 +194,11 @@ interface GameState {
   heroExp:        number;
   fragments:      Record<FragmentType, number>;
 
+  // Dungeon auto-run state
+  dungeonRunning:    boolean;
+  dungeonChestQueue: Item[][];
+  dungeonDeathFloor: number | null;
+
   setHero:        (partial: Partial<Hero>) => void;
   gainGold:       (amount: number) => void;
   spendGold:      (amount: number) => boolean;
@@ -212,6 +217,12 @@ interface GameState {
   saveCheckpoint:     () => void;
   returnToCheckpoint: () => void;
   resetGame:          () => void;
+
+  // Dungeon auto-run actions
+  startDungeonRun:      () => void;
+  stopDungeonRun:       (floor: number) => void;
+  addDungeonChest:      (items: Item[]) => void;
+  openNextDungeonChest: () => void;
 }
 
 const INITIAL_HERO: Hero = {
@@ -232,6 +243,9 @@ export const useGameStore = create<GameState>()(
   hpUpgradeCost:   40,
   heroExp:         0,
   fragments:       { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 },
+  dungeonRunning:    false,
+  dungeonChestQueue: [],
+  dungeonDeathFloor: null,
 
   setHero: (partial) =>
     set(s => ({ hero: { ...s.hero, ...partial } })),
@@ -362,34 +376,61 @@ export const useGameStore = create<GameState>()(
       hero:         { ...s.hero, hp: s.hero.maxHp },
     })),
 
+  startDungeonRun: () =>
+    set({ dungeonRunning: true, dungeonDeathFloor: null }),
+
+  stopDungeonRun: (floor) =>
+    set(s => ({
+      dungeonRunning:    false,
+      dungeonDeathFloor: floor,
+      hero:              { ...s.hero, hp: 0 },
+    })),
+
+  addDungeonChest: (items) =>
+    set(s => ({ dungeonChestQueue: [...s.dungeonChestQueue, items] })),
+
+  openNextDungeonChest: () =>
+    set(s => {
+      const [first, ...rest] = s.dungeonChestQueue;
+      return {
+        dungeonChestQueue: rest,
+        inventory: first ? [...s.inventory, ...first] : s.inventory,
+      };
+    }),
+
   resetGame: () =>
     set({
-      hero:            { ...INITIAL_HERO },
-      dungeonLevel:    1,
-      enemy:           buildEnemy(1),
-      equipped:        { ...EMPTY_EQUIPPED },
-      inventory:       [],
-      pendingChest:    null,
-      checkpointFloor: 1,
-      atkUpgradeCost:  10,
-      hpUpgradeCost:   40,
-      heroExp:         0,
-      fragments:       { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 },
+      hero:              { ...INITIAL_HERO },
+      dungeonLevel:      1,
+      enemy:             buildEnemy(1),
+      equipped:          { ...EMPTY_EQUIPPED },
+      inventory:         [],
+      pendingChest:      null,
+      checkpointFloor:   1,
+      atkUpgradeCost:    10,
+      hpUpgradeCost:     40,
+      heroExp:           0,
+      fragments:         { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 },
+      dungeonRunning:    false,
+      dungeonChestQueue: [],
+      dungeonDeathFloor: null,
     }),
   }),
   {
     name:    'dungeon-crawler-save',
     storage: createJSONStorage(() => AsyncStorage),
     partialize: (s) => ({
-      hero:            s.hero,
-      dungeonLevel:    s.dungeonLevel,
-      equipped:        s.equipped,
-      inventory:       s.inventory,
-      checkpointFloor: s.checkpointFloor,
-      atkUpgradeCost:  s.atkUpgradeCost,
-      hpUpgradeCost:   s.hpUpgradeCost,
-      heroExp:         s.heroExp,
-      fragments:       s.fragments,
+      hero:              s.hero,
+      dungeonLevel:      s.dungeonLevel,
+      equipped:          s.equipped,
+      inventory:         s.inventory,
+      checkpointFloor:   s.checkpointFloor,
+      atkUpgradeCost:    s.atkUpgradeCost,
+      hpUpgradeCost:     s.hpUpgradeCost,
+      heroExp:           s.heroExp,
+      fragments:         s.fragments,
+      dungeonChestQueue: s.dungeonChestQueue,
+      dungeonDeathFloor: s.dungeonDeathFloor,
     }),
   }
 ));

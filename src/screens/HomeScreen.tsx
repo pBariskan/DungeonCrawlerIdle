@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity,
   Animated, Dimensions,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useGameStore } from '../store/gameStore';
 
 const { width: SW } = Dimensions.get('window');
@@ -16,8 +17,17 @@ const BLT_P_START = 74;        // player bullet X start
 const BLT_P_END   = SW - 88;   // player bullet X end (just before enemy)
 const BLT_E_START = SW - 88;   // enemy bullet X start
 const BLT_E_END   = 74;        // enemy bullet X end (just before player)
+const BLT_P_OFF   = SW + 50;   // player bullet off-screen target (right)
+const BLT_E_OFF   = -50;       // enemy bullet off-screen target (left)
 
-type GamePhase = 'idle' | 'playing' | 'dead';
+// Travel durations to the character zone (hit-check moment)
+const TRAVEL_P = 420;   // ms — player bullet
+const TRAVEL_E = 650;   // ms — enemy bullet
+// Full off-screen duration at the SAME velocity (start → off-screen)
+const TOTAL_P  = Math.round(TRAVEL_P * (BLT_P_OFF - BLT_P_START) / (BLT_P_END - BLT_P_START));
+const TOTAL_E  = Math.round(TRAVEL_E * (BLT_E_START - BLT_E_OFF) / (BLT_E_START - BLT_E_END));
+
+type GamePhase = 'idle' | 'playing' | 'paused' | 'dead';
 
 type Bullet = {
   id: number;
@@ -157,17 +167,25 @@ export default function HomeScreen() {
 
     setBullets(prev => [...prev, { id, lane, anim, fromEnemy }]);
 
+    // Single constant-speed animation: start → off-screen
     Animated.timing(anim, {
       toValue: 1,
-      duration: fromEnemy ? 650 : 420,
+      duration: fromEnemy ? TOTAL_E : TOTAL_P,
       useNativeDriver: true,
     }).start(() => {
+      // Bullet exited screen — clean up
       setBullets(prev => prev.filter(b => b.id !== id));
+    });
+
+    // Hit/miss check fires exactly when the bullet reaches the character zone
+    setTimeout(() => {
       if (phaseRef.current !== 'playing') return;
 
+      let didHit = false;
+
       if (!fromEnemy) {
-        // Player bullet: hit if same lane as enemy on arrival
         if (lane === enemyLaneRef.current) {
+          didHit = true;
           const atk   = useGameStore.getState().hero.attack;
           const newHp = Math.max(0, enemyRef.current.hp - atk);
           enemyRef.current = { ...enemyRef.current, hp: newHp };
@@ -175,8 +193,8 @@ export default function HomeScreen() {
           if (newHp <= 0) handleEnemyDeathFn.current();
         }
       } else {
-        // Enemy bullet: hit if same lane as player on arrival
         if (lane === playerLaneRef.current) {
+          didHit = true;
           const def   = useGameStore.getState().hero.defense;
           const dmg   = Math.max(1, enemyRef.current.attack - def);
           const newHp = Math.max(0, playerHpRef.current - dmg);
@@ -189,7 +207,14 @@ export default function HomeScreen() {
           }
         }
       }
-    });
+
+      if (didHit) {
+        // Stop animation at impact and remove bullet
+        anim.stopAnimation();
+        setBullets(prev => prev.filter(b => b.id !== id));
+      }
+      // Miss: animation continues off-screen uninterrupted
+    }, fromEnemy ? TRAVEL_E : TRAVEL_P);
   };
 
   startIntervalsFn.current = () => {
@@ -214,8 +239,32 @@ export default function HomeScreen() {
   // Clean up intervals on unmount
   useEffect(() => () => { clearIntervalsFn.current(); }, []);
 
+  // Pause when leaving tab, resume when returning
+  useFocusEffect(
+    React.useCallback(() => {
+      if (phaseRef.current === 'paused') {
+        phaseRef.current = 'playing';
+        setPhase('playing');
+        startIntervalsFn.current();
+      }
+      return () => {
+        if (phaseRef.current === 'playing') {
+          phaseRef.current = 'paused';
+          setPhase('paused');
+          clearIntervalsFn.current();
+        }
+      };
+    }, []),
+  );
+
   // ── Event handlers ───────────────────────────────────────────────────────────
   const handleStart = () => {
+    if (phase === 'paused') {
+      phaseRef.current = 'playing';
+      setPhase('playing');
+      startIntervalsFn.current();
+      return;
+    }
     if (phase === 'dead') {
       const freshHp = useGameStore.getState().hero.maxHp;
       playerHpRef.current   = freshHp;  setPlayerHp(freshHp);
@@ -277,8 +326,11 @@ export default function HomeScreen() {
   const isPlaying   = phase === 'playing';
   const kills       = wave - 1;
 
-  const startCfg = phase === 'dead'
-    ? { label: 'RETRY  WAVE 01', bg: '#6b4a00', hi: '#ffaa44', lo: '#2a1a00' }
+  const startCfg =
+    phase === 'dead'
+      ? { label: 'RETRY  WAVE 01', bg: '#6b4a00', hi: '#ffaa44', lo: '#2a1a00' }
+    : phase === 'paused'
+      ? { label: `RESUME WAVE ${String(wave).padStart(2, '0')}`, bg: '#1a3a6b', hi: '#66aaff', lo: '#0a1838' }
     : { label: `START WAVE ${String(wave).padStart(2, '0')}`, bg: '#1a6b1a', hi: '#77ff77', lo: '#0a3010' };
 
   return (
@@ -320,8 +372,8 @@ export default function HomeScreen() {
           const tx = b.anim.interpolate({
             inputRange:  [0, 1],
             outputRange: b.fromEnemy
-              ? [BLT_E_START, BLT_E_END]
-              : [BLT_P_START, BLT_P_END],
+              ? [BLT_E_START, BLT_E_OFF]
+              : [BLT_P_START, BLT_P_OFF],
           });
           return (
             <Animated.View
