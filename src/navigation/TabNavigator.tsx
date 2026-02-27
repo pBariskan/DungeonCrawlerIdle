@@ -19,7 +19,7 @@ export type RootTabParamList = {
   Home:    undefined;
   Dungeon: undefined;
   Hero:    undefined;
-  Shop:    undefined;
+  Village: undefined;
   Forge:   undefined;
 };
 
@@ -29,7 +29,7 @@ const ICONS: Record<string, string> = {
   Home:    '🏠',
   Dungeon: '⚔️',
   Hero:    '🧙',
-  Shop:    '🛒',
+  Village: '🏘️',
   Forge:   '🔥',
 };
 
@@ -48,11 +48,11 @@ export default function TabNavigator() {
         headerRight: () => <GoldDisplay />,
       })}
     >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Dungeon" component={DungeonScreen} />
       <Tab.Screen name="Hero" component={HeroScreen} />
-      <Tab.Screen name="Shop" component={ShopScreen} />
+      <Tab.Screen name="Dungeon" component={DungeonScreen} />
+      <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Forge" component={ForgeScreen} />
+      <Tab.Screen name="Village" component={ShopScreen} />
     </Tab.Navigator>
   );
 }
