@@ -6,6 +6,34 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export type EquipSlot   = 'weapon' | 'helmet' | 'armor' | 'boots' | 'shield' | 'ring';
 export type ItemRarity  = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 
+// ─── Companion system ───────────────────────────────────────────────────────────
+export type CompanionId = 'ironGuard' | 'shadowStriker';
+
+export interface Companion {
+  id:           CompanionId;
+  name:         string;
+  emoji:        string;
+  description:  string;
+  bonusAttack:  number;
+  bonusDefense: number;
+  recruitCost:  number;
+}
+
+export const COMPANION_IDS: CompanionId[] = ['ironGuard', 'shadowStriker'];
+
+export const COMPANIONS: Record<CompanionId, Companion> = {
+  ironGuard: {
+    id: 'ironGuard', name: 'Iron Guard', emoji: '🦁',
+    description: 'A steadfast defender. Low damage, high resilience.',
+    bonusAttack: 4, bonusDefense: 18, recruitCost: 100,
+  },
+  shadowStriker: {
+    id: 'shadowStriker', name: 'Shadow Striker', emoji: '🥷',
+    description: 'A swift assassin. High damage, fragile defense.',
+    bonusAttack: 18, bonusDefense: 4, recruitCost: 100,
+  },
+};
+
 // ─── Fragment system ────────────────────────────────────────────────────────────
 export type FragmentType = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 
@@ -139,7 +167,7 @@ const BOSS_EMOJIS = ['👹', '🐲', '💀', '🔥', '☠️', '🌑'];
 export interface Hero {
   hp: number; maxHp: number;
   attack: number; defense: number;
-  level: number; gold: number;
+  level: number;
 }
 
 export interface Enemy {
@@ -182,16 +210,31 @@ const EMPTY_EQUIPPED: Record<EquipSlot, Item | null> = {
   weapon: null, helmet: null, armor: null, boots: null, shield: null, ring: null,
 };
 
+function makeInitialHero(cid: CompanionId): Hero {
+  return {
+    hp: 100, maxHp: 100, level: 1,
+    attack:  10 + COMPANIONS[cid].bonusAttack,
+    defense:  5 + COMPANIONS[cid].bonusDefense,
+  };
+}
+
 interface GameState {
-  hero:           Hero;
+  // Per-companion hero state
+  heroes:            Record<CompanionId, Hero>;
+  companionEquipped: Record<CompanionId, Record<EquipSlot, Item | null>>;
+  companionExp:      Record<CompanionId, number>;
+
+  // Shared resources
+  gold:           number;
+
   dungeonLevel:   number;
   enemy:          Enemy;
-  equipped:       Record<EquipSlot, Item | null>;
   inventory:      Item[];
   pendingChest:   Item[] | null;
-  atkUpgradeCost: number;
-  hpUpgradeCost:  number;
-  heroExp:        number;
+  atkUpgradeCost:      number;
+  hpUpgradeCost:       number;
+  bulletSizeLevel:     number;
+  bulletSizeUpgradeCost: number;
   fragments:      Record<FragmentType, number>;
 
   // Dungeon auto-run state
@@ -200,24 +243,31 @@ interface GameState {
   dungeonDeathFloor: number | null;
   dungeonPendingGold: number;
 
-  setHero:        (partial: Partial<Hero>) => void;
+  setHero:        (companionId: CompanionId, partial: Partial<Hero>) => void;
   gainGold:       (amount: number) => void;
   spendGold:      (amount: number) => boolean;
-  levelUpHero:    () => void;
-  addExp:         (amount: number) => void;
+  levelUpHero:    (companionId: CompanionId) => void;
+  addExp:         (amount: number, companionId: CompanionId) => void;
   forgeItem:      (itemId: string) => void;
   advanceDungeon: () => void;
   damageEnemy:    (amount: number) => void;
   damageHero:     (amount: number) => void;
   spawnEnemy:     () => void;
-  equipItem:      (item: Item) => void;
-  unequipItem:    (slot: EquipSlot) => void;
+  equipItem:      (item: Item, companionId: CompanionId) => void;
+  unequipItem:    (slot: EquipSlot, companionId: CompanionId) => void;
   setPendingChest:    (items: Item[]) => void;
   collectChest:       () => void;
-  checkpointFloor:    number;
-  saveCheckpoint:     () => void;
-  returnToCheckpoint: () => void;
-  resetGame:          () => void;
+  checkpointFloor:       number;
+  saveCheckpoint:        () => void;
+  returnToCheckpoint:    () => void;
+  upgradeBulletSize:     () => void;
+  resetGame:             () => void;
+
+  // Companion actions
+  unlockedCompanions:  CompanionId[];
+  assignedCompanions:  { home: CompanionId | null; dungeon: CompanionId | null };
+  recruitCompanion:    (id: CompanionId) => void;
+  assignCompanion:     (mode: 'home' | 'dungeon', id: CompanionId | null) => void;
 
   // Dungeon auto-run actions
   startDungeonRun:       () => void;
@@ -227,46 +277,54 @@ interface GameState {
   addDungeonPendingGold: (amount: number) => void;
 }
 
-const INITIAL_HERO: Hero = {
-  hp: 100, maxHp: 100, attack: 10, defense: 5, level: 1, gold: 0,
-};
-
 export const useGameStore = create<GameState>()(
   persist(
     (set, get) => ({
-  hero:            INITIAL_HERO,
+  heroes: {
+    ironGuard:     makeInitialHero('ironGuard'),
+    shadowStriker: makeInitialHero('shadowStriker'),
+  },
+  companionEquipped: {
+    ironGuard:     { ...EMPTY_EQUIPPED },
+    shadowStriker: { ...EMPTY_EQUIPPED },
+  },
+  companionExp: { ironGuard: 0, shadowStriker: 0 },
+  gold:            0,
   dungeonLevel:    1,
   enemy:           buildEnemy(1),
-  equipped:        { ...EMPTY_EQUIPPED },
   inventory:       [],
   pendingChest:    null,
   checkpointFloor: 1,
-  atkUpgradeCost:  10,
-  hpUpgradeCost:   40,
-  heroExp:         0,
+  atkUpgradeCost:       10,
+  hpUpgradeCost:        40,
+  bulletSizeLevel:      0,
+  bulletSizeUpgradeCost: 200,
   fragments:       { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 },
   dungeonRunning:     false,
   dungeonChestQueue:  [],
   dungeonDeathFloor:  null,
   dungeonPendingGold: 0,
+  unlockedCompanions:  ['ironGuard', 'shadowStriker'],
+  assignedCompanions:  { home: 'ironGuard' as CompanionId, dungeon: 'ironGuard' as CompanionId },
 
-  setHero: (partial) =>
-    set(s => ({ hero: { ...s.hero, ...partial } })),
+  setHero: (cid, partial) =>
+    set(s => ({ heroes: { ...s.heroes, [cid]: { ...s.heroes[cid], ...partial } } })),
 
   gainGold: (amount) =>
-    set(s => ({ hero: { ...s.hero, gold: s.hero.gold + amount } })),
+    set(s => ({ gold: s.gold + amount })),
 
   spendGold: (amount) => {
-    if (get().hero.gold < amount) return false;
-    set(s => ({ hero: { ...s.hero, gold: s.hero.gold - amount } }));
+    if (get().gold < amount) return false;
+    set(s => ({ gold: s.gold - amount }));
     return true;
   },
 
-  levelUpHero: () => {
+  levelUpHero: (cid) => {
     const s = get();
-    const req = getLevelRequirements(s.hero.level);
-    if (s.heroExp < req.exp) return;
-    if (s.hero.gold < req.gold) return;
+    const h = s.heroes[cid];
+    const req = getLevelRequirements(h.level);
+    if (s.companionExp[cid] < req.exp) return;
+    if (s.gold < req.gold) return;
     for (const [type, needed] of Object.entries(req.fragments)) {
       if ((s.fragments[type as FragmentType] ?? 0) < (needed ?? 0)) return;
     }
@@ -274,23 +332,28 @@ export const useGameStore = create<GameState>()(
     for (const [type, needed] of Object.entries(req.fragments)) {
       newFragments[type as FragmentType] -= needed ?? 0;
     }
-    const newMaxHp = s.hero.maxHp + 10;
+    const newMaxHp = h.maxHp + 10;
     set({
-      heroExp:   0,
-      fragments: newFragments,
-      hero: {
-        ...s.hero,
-        gold:    s.hero.gold - req.gold,
-        level:   s.hero.level + 1,
-        maxHp:   newMaxHp,
-        hp:      newMaxHp,
-        attack:  s.hero.attack + 3,
+      gold:         s.gold - req.gold,
+      fragments:    newFragments,
+      companionExp: { ...s.companionExp, [cid]: 0 },
+      heroes: {
+        ...s.heroes,
+        [cid]: {
+          ...h,
+          level:   h.level + 1,
+          maxHp:   newMaxHp,
+          hp:      newMaxHp,
+          attack:  h.attack + 3,
+        },
       },
     });
   },
 
-  addExp: (amount) =>
-    set(s => ({ heroExp: s.heroExp + amount })),
+  addExp: (amount, cid) =>
+    set(s => ({
+      companionExp: { ...s.companionExp, [cid]: s.companionExp[cid] + amount },
+    })),
 
   forgeItem: (itemId) =>
     set(s => {
@@ -315,46 +378,64 @@ export const useGameStore = create<GameState>()(
 
   damageHero: (amount) =>
     set(s => {
-      const dmg = Math.max(1, amount - s.hero.defense);
-      return { hero: { ...s.hero, hp: Math.max(0, s.hero.hp - dmg) } };
+      const cid = s.assignedCompanions.dungeon ?? 'ironGuard';
+      const h = s.heroes[cid];
+      const dmg = Math.max(1, amount - h.defense);
+      return {
+        heroes: { ...s.heroes, [cid]: { ...h, hp: Math.max(0, h.hp - dmg) } },
+      };
     }),
 
   spawnEnemy: () =>
     set(s => ({ enemy: buildEnemy(s.dungeonLevel) })),
 
-  equipItem: (item) =>
+  equipItem: (item, cid) =>
     set(s => {
-      const old    = s.equipped[item.slot];
+      const old    = s.companionEquipped[cid][item.slot];
       const newInv = s.inventory.filter(i => i.id !== item.id);
       if (old) newInv.push(old);
-      const newMaxHp = s.hero.maxHp - (old?.bonusHp ?? 0) + item.bonusHp;
+      const h = s.heroes[cid];
+      const newMaxHp = h.maxHp - (old?.bonusHp ?? 0) + item.bonusHp;
       return {
-        equipped:  { ...s.equipped, [item.slot]: item },
+        companionEquipped: {
+          ...s.companionEquipped,
+          [cid]: { ...s.companionEquipped[cid], [item.slot]: item },
+        },
         inventory: newInv,
-        hero: {
-          ...s.hero,
-          attack:  s.hero.attack  - (old?.bonusAttack  ?? 0) + item.bonusAttack,
-          defense: s.hero.defense - (old?.bonusDefense ?? 0) + item.bonusDefense,
-          maxHp:   newMaxHp,
-          hp:      Math.min(s.hero.hp + item.bonusHp, newMaxHp),
+        heroes: {
+          ...s.heroes,
+          [cid]: {
+            ...h,
+            attack:  h.attack  - (old?.bonusAttack  ?? 0) + item.bonusAttack,
+            defense: h.defense - (old?.bonusDefense ?? 0) + item.bonusDefense,
+            maxHp:   newMaxHp,
+            hp:      Math.min(h.hp + item.bonusHp, newMaxHp),
+          },
         },
       };
     }),
 
-  unequipItem: (slot) =>
+  unequipItem: (slot, cid) =>
     set(s => {
-      const item = s.equipped[slot];
+      const item = s.companionEquipped[cid][slot];
       if (!item) return s;
-      const newMaxHp = Math.max(1, s.hero.maxHp - item.bonusHp);
+      const h = s.heroes[cid];
+      const newMaxHp = Math.max(1, h.maxHp - item.bonusHp);
       return {
-        equipped:  { ...s.equipped, [slot]: null },
+        companionEquipped: {
+          ...s.companionEquipped,
+          [cid]: { ...s.companionEquipped[cid], [slot]: null },
+        },
         inventory: [...s.inventory, item],
-        hero: {
-          ...s.hero,
-          attack:  s.hero.attack  - item.bonusAttack,
-          defense: s.hero.defense - item.bonusDefense,
-          maxHp:   newMaxHp,
-          hp:      Math.min(s.hero.hp, newMaxHp),
+        heroes: {
+          ...s.heroes,
+          [cid]: {
+            ...h,
+            attack:  h.attack  - item.bonusAttack,
+            defense: h.defense - item.bonusDefense,
+            maxHp:   newMaxHp,
+            hp:      Math.min(h.hp, newMaxHp),
+          },
         },
       };
     }),
@@ -367,28 +448,44 @@ export const useGameStore = create<GameState>()(
       pendingChest: null,
     })),
 
-  // Saves current dungeonLevel as checkpoint (called after advanceDungeon, so it stores the new level)
   saveCheckpoint: () =>
     set(s => ({ checkpointFloor: s.dungeonLevel })),
 
-  // Teleports back to checkpoint floor and restores hero HP
   returnToCheckpoint: () =>
-    set(s => ({
-      dungeonLevel: s.checkpointFloor,
-      enemy:        buildEnemy(s.checkpointFloor),
-      hero:         { ...s.hero, hp: s.hero.maxHp },
-    })),
+    set(s => {
+      const cid = s.assignedCompanions.dungeon ?? 'ironGuard';
+      const h = s.heroes[cid];
+      return {
+        dungeonLevel: s.checkpointFloor,
+        enemy:        buildEnemy(s.checkpointFloor),
+        heroes: { ...s.heroes, [cid]: { ...h, hp: h.maxHp } },
+      };
+    }),
+
+  upgradeBulletSize: () => {
+    const s = get();
+    if (s.gold < s.bulletSizeUpgradeCost) return;
+    set({
+      gold:                  s.gold - s.bulletSizeUpgradeCost,
+      bulletSizeLevel:       s.bulletSizeLevel + 1,
+      bulletSizeUpgradeCost: Math.round(s.bulletSizeUpgradeCost * 1.8),
+    });
+  },
 
   startDungeonRun: () =>
     set({ dungeonRunning: true, dungeonDeathFloor: null, dungeonPendingGold: 0 }),
 
   stopDungeonRun: (floor) =>
-    set(s => ({
-      dungeonRunning:     false,
-      dungeonDeathFloor:  floor,
-      dungeonPendingGold: 0,
-      hero:               { ...s.hero, hp: 0, gold: s.hero.gold + s.dungeonPendingGold },
-    })),
+    set(s => {
+      const cid = s.assignedCompanions.dungeon ?? 'ironGuard';
+      return {
+        dungeonRunning:     false,
+        dungeonDeathFloor:  floor,
+        dungeonPendingGold: 0,
+        gold:               s.gold + s.dungeonPendingGold,
+        heroes: { ...s.heroes, [cid]: { ...s.heroes[cid], hp: 0 } },
+      };
+    }),
 
   addDungeonChest: (items) =>
     set(s => ({ dungeonChestQueue: [...s.dungeonChestQueue, items] })),
@@ -405,41 +502,115 @@ export const useGameStore = create<GameState>()(
   addDungeonPendingGold: (amount) =>
     set(s => ({ dungeonPendingGold: s.dungeonPendingGold + amount })),
 
+  recruitCompanion: (id) => {
+    const s = get();
+    if (s.unlockedCompanions.includes(id)) return;
+    if (!s.spendGold(COMPANIONS[id].recruitCost)) return;
+    set(s2 => ({ unlockedCompanions: [...s2.unlockedCompanions, id] }));
+  },
+
+  assignCompanion: (mode, id) =>
+    set(s => ({ assignedCompanions: { ...s.assignedCompanions, [mode]: id } })),
+
   resetGame: () =>
     set({
-      hero:              { ...INITIAL_HERO },
+      heroes: {
+        ironGuard:     makeInitialHero('ironGuard'),
+        shadowStriker: makeInitialHero('shadowStriker'),
+      },
+      companionEquipped: {
+        ironGuard:     { ...EMPTY_EQUIPPED },
+        shadowStriker: { ...EMPTY_EQUIPPED },
+      },
+      companionExp: { ironGuard: 0, shadowStriker: 0 },
+      gold:              0,
       dungeonLevel:      1,
       enemy:             buildEnemy(1),
-      equipped:          { ...EMPTY_EQUIPPED },
       inventory:         [],
       pendingChest:      null,
       checkpointFloor:   1,
-      atkUpgradeCost:    10,
-      hpUpgradeCost:     40,
-      heroExp:           0,
+      atkUpgradeCost:        10,
+      hpUpgradeCost:         40,
+      bulletSizeLevel:       0,
+      bulletSizeUpgradeCost: 200,
       fragments:         { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 },
       dungeonRunning:     false,
       dungeonChestQueue:  [],
       dungeonDeathFloor:  null,
       dungeonPendingGold: 0,
+      unlockedCompanions:  ['ironGuard', 'shadowStriker'],
+      assignedCompanions:  { home: 'ironGuard' as CompanionId, dungeon: 'ironGuard' as CompanionId },
     }),
   }),
   {
     name:    'dungeon-crawler-save',
     storage: createJSONStorage(() => AsyncStorage),
+    version: 3,
+    migrate: (persisted: any, version) => {
+      if (version < 2) {
+        const BASE_HERO = { hp: 100, maxHp: 100, attack: 10, defense: 5, level: 1 };
+        const oldHero = persisted.hero ?? { ...BASE_HERO, gold: 0 };
+        persisted = {
+          ...persisted,
+          gold: oldHero.gold ?? 0,
+          heroes: {
+            ironGuard: {
+              hp:      oldHero.hp,
+              maxHp:   oldHero.maxHp,
+              attack:  oldHero.attack,
+              defense: oldHero.defense,
+              level:   oldHero.level,
+            },
+            shadowStriker: { ...BASE_HERO },
+          },
+          companionEquipped: {
+            ironGuard:     persisted.equipped ?? { ...EMPTY_EQUIPPED },
+            shadowStriker: { ...EMPTY_EQUIPPED },
+          },
+          companionExp: {
+            ironGuard:     persisted.heroExp ?? 0,
+            shadowStriker: 0,
+          },
+        };
+      }
+      if (version < 3) {
+        const h = persisted.heroes ?? {};
+        persisted = {
+          ...persisted,
+          heroes: {
+            ironGuard: {
+              ...(h.ironGuard ?? {}),
+              attack:  ((h.ironGuard?.attack  ?? 10) + COMPANIONS.ironGuard.bonusAttack),
+              defense: ((h.ironGuard?.defense ??  5) + COMPANIONS.ironGuard.bonusDefense),
+            },
+            shadowStriker: {
+              ...(h.shadowStriker ?? {}),
+              attack:  ((h.shadowStriker?.attack  ?? 10) + COMPANIONS.shadowStriker.bonusAttack),
+              defense: ((h.shadowStriker?.defense ??  5) + COMPANIONS.shadowStriker.bonusDefense),
+            },
+          },
+        };
+      }
+      return persisted;
+    },
     partialize: (s) => ({
-      hero:              s.hero,
+      heroes:            s.heroes,
+      companionEquipped: s.companionEquipped,
+      companionExp:      s.companionExp,
+      gold:              s.gold,
       dungeonLevel:      s.dungeonLevel,
-      equipped:          s.equipped,
       inventory:         s.inventory,
       checkpointFloor:   s.checkpointFloor,
-      atkUpgradeCost:    s.atkUpgradeCost,
-      hpUpgradeCost:     s.hpUpgradeCost,
-      heroExp:           s.heroExp,
+      atkUpgradeCost:        s.atkUpgradeCost,
+      hpUpgradeCost:         s.hpUpgradeCost,
+      bulletSizeLevel:       s.bulletSizeLevel,
+      bulletSizeUpgradeCost: s.bulletSizeUpgradeCost,
       fragments:         s.fragments,
       dungeonChestQueue:  s.dungeonChestQueue,
       dungeonDeathFloor:  s.dungeonDeathFloor,
       dungeonPendingGold: s.dungeonPendingGold,
+      unlockedCompanions:  s.unlockedCompanions,
+      assignedCompanions:  s.assignedCompanions,
     }),
   }
 ));

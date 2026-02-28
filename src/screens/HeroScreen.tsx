@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions } from 'react-native';
 import {
   useGameStore,
+  COMPANIONS, COMPANION_IDS,
   SLOT_EMOJI, SLOT_LABEL, RARITY_COLOR, FRAGMENT_INFO, getLevelRequirements,
-  type Item, type EquipSlot, type FragmentType,
+  type Item, type EquipSlot, type FragmentType, type CompanionId,
 } from '../store/gameStore';
 
 const PIXEL = 'PressStart2P_400Regular';
@@ -86,8 +87,19 @@ const ic = StyleSheet.create({
 
 // ─── Main screen ───────────────────────────────────────────────────────────────
 export default function HeroScreen() {
-  const { hero, equipped, inventory, equipItem, unequipItem, heroExp, fragments, levelUpHero } = useGameStore();
+  const { heroes, companionEquipped, companionExp, gold, inventory, equipItem, unequipItem, levelUpHero, fragments } = useGameStore();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [viewedCompanion, setViewedCompanion] = useState<CompanionId>('ironGuard');
+
+  const hero     = heroes[viewedCompanion];
+  const equipped = companionEquipped[viewedCompanion];
+  const heroExp  = companionExp[viewedCompanion];
+
+  const activeIdx = COMPANION_IDS.indexOf(viewedCompanion);
+  const handlePrev = () =>
+    setViewedCompanion(COMPANION_IDS[(activeIdx - 1 + COMPANION_IDS.length) % COMPANION_IDS.length]);
+  const handleNext = () =>
+    setViewedCompanion(COMPANION_IDS[(activeIdx + 1) % COMPANION_IDS.length]);
 
   const selectedItem = inventory.find(i => i.id === selectedId) ?? null;
 
@@ -98,12 +110,12 @@ export default function HeroScreen() {
   const handleSlotPress = (slot: EquipSlot) => {
     if (selectedItem) {
       if (selectedItem.slot === slot) {
-        equipItem(selectedItem);
+        equipItem(selectedItem, viewedCompanion);
         setSelectedId(null);
       }
       // Wrong slot: hint text already guides the user — do nothing else
     } else {
-      if (equipped[slot]) unequipItem(slot);
+      if (equipped[slot]) unequipItem(slot, viewedCompanion);
     }
   };
 
@@ -120,7 +132,7 @@ export default function HeroScreen() {
   const req = getLevelRequirements(hero.level);
   const expPct = Math.min(100, (heroExp / req.exp) * 100);
   const hasEnoughExp  = heroExp >= req.exp;
-  const hasEnoughGold = hero.gold >= req.gold;
+  const hasEnoughGold = gold >= req.gold;
   const hasEnoughFrags = Object.entries(req.fragments).every(
     ([t, n]) => (fragments[t as FragmentType] ?? 0) >= (n ?? 0),
   );
@@ -131,7 +143,7 @@ export default function HeroScreen() {
 
       {/* ── Gold chip ── */}
       <View style={s.goldChip}>
-        <Text style={s.goldText}>★  {hero.gold}  GOLD</Text>
+        <Text style={s.goldText}>★  {gold}  GOLD</Text>
       </View>
 
       {/* ── Paperdoll ── */}
@@ -150,9 +162,23 @@ export default function HeroScreen() {
           ))}
         </View>
 
-        {/* Center: hero sprite + HP bar */}
+        {/* Center: companion navigator + HP bar */}
         <View style={s.heroCenter}>
-          <Text style={s.heroSprite}>🧙</Text>
+          <View style={s.companionNav}>
+            <TouchableOpacity style={s.navBtn} onPress={handlePrev} activeOpacity={0.8}>
+              <Text style={s.navArrow}>◀</Text>
+            </TouchableOpacity>
+
+            <View style={s.companionInfo}>
+              <Text style={s.heroSprite}>{COMPANIONS[viewedCompanion].emoji}</Text>
+              <Text style={s.companionName}>{COMPANIONS[viewedCompanion].name.toUpperCase()}</Text>
+            </View>
+
+            <TouchableOpacity style={s.navBtn} onPress={handleNext} activeOpacity={0.8}>
+              <Text style={s.navArrow}>▶</Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={s.hpBarBg}>
             <View style={[s.hpBarFill, { width: `${heroHpPct}%` }]} />
           </View>
@@ -242,7 +268,7 @@ export default function HeroScreen() {
             <Text style={[s.reqCheck, hasEnoughGold ? s.checkOk : s.checkNo]}>
               {hasEnoughGold ? '✓' : '✗'}
             </Text>
-            <Text style={s.reqText}>GOLD  {hero.gold}/{req.gold}</Text>
+            <Text style={s.reqText}>GOLD  {gold}/{req.gold}</Text>
           </View>
           {Object.entries(req.fragments).map(([type, needed]) => {
             const have = fragments[type as FragmentType] ?? 0;
@@ -263,7 +289,7 @@ export default function HeroScreen() {
 
         <TouchableOpacity
           style={[s.levelUpBtn, !canLevelUp && s.levelUpBtnOff]}
-          onPress={levelUpHero}
+          onPress={() => levelUpHero(viewedCompanion)}
           disabled={!canLevelUp}
           activeOpacity={0.8}
         >
@@ -331,7 +357,22 @@ const s = StyleSheet.create({
   paperdoll:  { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   slotCol:    { width: SLOT_W, alignItems: 'center' },
   heroCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
-  heroSprite: { fontSize: 58, marginBottom: 10 },
+  companionNav: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    marginBottom: 10,
+  },
+  navBtn: {
+    paddingHorizontal: 8, paddingVertical: 6,
+    backgroundColor: '#243a6a',
+    borderTopWidth: 2, borderLeftWidth: 2,
+    borderBottomWidth: 3, borderRightWidth: 3,
+    borderTopColor: '#3d5ca8', borderLeftColor: '#3d5ca8',
+    borderBottomColor: '#0a1020', borderRightColor: '#0a1020',
+  },
+  navArrow: { fontFamily: PIXEL, color: '#7ec8f7', fontSize: 9 },
+  companionInfo: { alignItems: 'center', minWidth: 80 },
+  companionName: { fontFamily: PIXEL, color: '#e0c97f', fontSize: 5, marginTop: 4, textAlign: 'center' },
+  heroSprite: { fontSize: 58, marginBottom: 0 },
   hpBarBg:    { width: '85%', height: 8, backgroundColor: '#2a3d6a', marginBottom: 6 },
   hpBarFill:  { height: '100%', backgroundColor: '#2ecc71' },
   heroLv:     { fontFamily: PIXEL, color: '#80a8e0', fontSize: 7 },

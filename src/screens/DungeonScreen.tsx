@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, Animated,
 } from 'react-native';
-import { useGameStore, RARITY_COLOR, type Item } from '../store/gameStore';
+import { useGameStore, RARITY_COLOR, COMPANIONS, type Item } from '../store/gameStore';
 import { startDungeonCombat } from '../services/dungeonCombat';
 
 const PIXEL = 'PressStart2P_400Regular';
@@ -81,7 +81,7 @@ const ic = StyleSheet.create({
 });
 
 // ─── Hero stats panel (always visible) ────────────────────────────────────────
-function HeroStatsPanel({ hero }: { hero: { maxHp: number; attack: number; defense: number; level: number; gold: number } }) {
+function HeroStatsPanel({ hero }: { hero: { maxHp: number; attack: number; defense: number; level: number } }) {
   return (
     <View style={hs.box}>
       <View style={hs.row}>
@@ -124,10 +124,12 @@ const hs = StyleSheet.create({
 // ─── Main screen ───────────────────────────────────────────────────────────────
 export default function DungeonScreen() {
   const {
-    hero, enemy, dungeonLevel,
+    heroes, enemy, dungeonLevel,
     dungeonRunning, dungeonChestQueue, dungeonDeathFloor, dungeonPendingGold,
     checkpointFloor, openNextDungeonChest, returnToCheckpoint,
   } = useGameStore();
+  const assignedDungeon = useGameStore(s => s.assignedCompanions.dungeon);
+  const hero = heroes[assignedDungeon ?? 'ironGuard'];
 
   // Track items from the most recently opened chest to display them
   const [lastOpenedItems, setLastOpenedItems] = useState<Item[] | null>(null);
@@ -183,7 +185,9 @@ export default function DungeonScreen() {
 
           <View style={s.divider} />
 
-          <Text style={s.heroSprite}>🧙</Text>
+          <Text style={s.heroSprite}>
+            {COMPANIONS[assignedDungeon ?? 'ironGuard'].emoji}
+          </Text>
           <Text style={s.heroName}>HERO LV.{hero.level}</Text>
           <SmoothBar pct={heroHpPct} color="#2ecc71" />
         </View>

@@ -4,7 +4,7 @@ import {
   Animated, Dimensions, PanResponder,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { useGameStore } from '../store/gameStore';
+import { useGameStore, COMPANIONS } from '../store/gameStore';
 
 const { width: SW } = Dimensions.get('window');
 const PIXEL = 'PressStart2P_400Regular';
@@ -36,6 +36,8 @@ type Bullet2D = {
   x: number; y: number;
   dx: number; dy: number;
   fromEnemy: boolean;
+  r: number;       // visual radius
+  hitR: number;    // collision radius
 };
 
 type ShooterEnemy = {
@@ -125,9 +127,16 @@ const enemyInit   = (): Vec2 => ({ x: ARENA_W - ENEMY_SIZE - 20, y: ARENA_H / 2 
 
 // ── Home Screen ───────────────────────────────────────────────────────────────
 export default function HomeScreen() {
-  const { hero, spendGold, setHero } = useGameStore();
-  const atkUpgradeCost = useGameStore(s => s.atkUpgradeCost);
-  const hpUpgradeCost  = useGameStore(s => s.hpUpgradeCost);
+  const spendGold              = useGameStore(s => s.spendGold);
+  const setHero                = useGameStore(s => s.setHero);
+  const atkUpgradeCost         = useGameStore(s => s.atkUpgradeCost);
+  const hpUpgradeCost          = useGameStore(s => s.hpUpgradeCost);
+  const bulletSizeLevel        = useGameStore(s => s.bulletSizeLevel);
+  const bulletSizeUpgradeCost  = useGameStore(s => s.bulletSizeUpgradeCost);
+  const upgradeBulletSize      = useGameStore(s => s.upgradeBulletSize);
+  const assignedHome           = useGameStore(s => s.assignedCompanions.home);
+  const hero                   = useGameStore(s => s.heroes[s.assignedCompanions.home ?? 'ironGuard']);
+  const gold                   = useGameStore(s => s.gold);
 
   const [phase,     setPhase]     = useState<GamePhase>('idle');
   const [playerPos, setPlayerPos] = useState<Vec2>(PLAYER_INIT);
@@ -148,6 +157,8 @@ export default function HomeScreen() {
   const bulletsRef   = useRef<Bullet2D[]>([]);
   const lastTouchRef    = useRef<Vec2>({ x: 0, y: 0 });
   const wanderTargetRef = useRef<Vec2>(pickWanderTarget());
+  const bulletRadiusRef = useRef(BULLET_R);
+  bulletRadiusRef.current = BULLET_R + bulletSizeLevel * 3;
 
   const gameLoopRef  = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoFireRef  = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -234,14 +245,17 @@ export default function HomeScreen() {
       dy = (ty - cy) / dist * BULLET_SPD;
     }
 
-    bulletsRef.current = [...bulletsRef.current, { id: ++bulletIdRef.current, x: cx, y: cy, dx, dy, fromEnemy }];
+    const r    = fromEnemy ? BULLET_R : bulletRadiusRef.current;
+    const hitR = fromEnemy ? HIT_RADIUS : HIT_RADIUS + (bulletRadiusRef.current - BULLET_R) * 2;
+    bulletsRef.current = [...bulletsRef.current, { id: ++bulletIdRef.current, x: cx, y: cy, dx, dy, fromEnemy, r, hitR }];
   };
 
   handleEnemyDeathFn.current = () => {
     clearIntervalsFn.current();
     const { goldReward, expReward } = enemyRef.current;
     useGameStore.getState().gainGold(goldReward);
-    useGameStore.getState().addExp(expReward);
+    const _homeCid = useGameStore.getState().assignedCompanions.home ?? 'ironGuard';
+    useGameStore.getState().addExp(expReward, _homeCid);
     const nextWave  = waveRef.current + 1;
     waveRef.current = nextWave;
     setWave(nextWave);
@@ -273,10 +287,12 @@ export default function HomeScreen() {
         const tsz = b.fromEnemy ? PLAYER_SIZE : ENEMY_SIZE;
         const dist = Math.hypot(b.x - (tgt.x + tsz / 2), b.y - (tgt.y + tsz / 2));
 
-        if (dist < HIT_RADIUS) {
+        if (dist < b.hitR) {
           if (b.fromEnemy) {
-            const def   = useGameStore.getState().hero.defense;
-            const dmg   = Math.max(1, enemyRef.current.attack - def);
+            const state2 = useGameStore.getState();
+            const cId2   = state2.assignedCompanions.home ?? 'ironGuard';
+            const def    = state2.heroes[cId2].defense;
+            const dmg    = Math.max(1, enemyRef.current.attack - def);
             const newHp = Math.max(0, playerHpRef.current - dmg);
             playerHpRef.current = newHp;
             setPlayerHp(newHp);
@@ -286,8 +302,10 @@ export default function HomeScreen() {
               setPhase('dead');
             }
           } else {
-            const atk   = useGameStore.getState().hero.attack;
-            const newHp = Math.max(0, enemyRef.current.hp - atk);
+            const state = useGameStore.getState();
+            const cId   = state.assignedCompanions.home ?? 'ironGuard';
+            const atk   = state.heroes[cId].attack;
+            const newHp    = Math.max(0, enemyRef.current.hp - atk);
             enemyRef.current = { ...enemyRef.current, hp: newHp };
             setEnemy({ ...enemyRef.current });
             if (newHp <= 0) handleEnemyDeathFn.current();
@@ -348,7 +366,8 @@ export default function HomeScreen() {
   // ── Event handlers ────────────────────────────────────────────────────────────
   const handleStart = () => {
     if (phase === 'dead') {
-      const freshHp       = useGameStore.getState().hero.maxHp;
+      const _s            = useGameStore.getState();
+      const freshHp       = _s.heroes[_s.assignedCompanions.home ?? 'ironGuard'].maxHp;
       playerHpRef.current = freshHp; setPlayerHp(freshHp);
       const e1            = buildShooterEnemy(1);
       enemyRef.current    = e1;      setEnemy(e1);
@@ -367,16 +386,22 @@ export default function HomeScreen() {
   // ── Upgrade handlers ──────────────────────────────────────────────────────────
   const handleUpgradeAttack = () => {
     if (spendGold(atkUpgradeCost)) {
-      setHero({ attack: useGameStore.getState().hero.attack + 2 });
+      const cid = useGameStore.getState().assignedCompanions.home ?? 'ironGuard';
+      setHero(cid, { attack: useGameStore.getState().heroes[cid].attack + 2 });
       useGameStore.setState({ atkUpgradeCost: Math.round(atkUpgradeCost * 1.25) });
     }
   };
   const handleUpgradeHp = () => {
     if (spendGold(hpUpgradeCost)) {
-      const h = useGameStore.getState().hero;
-      setHero({ maxHp: h.maxHp + 20, hp: h.hp + 20 });
+      const cid = useGameStore.getState().assignedCompanions.home ?? 'ironGuard';
+      const h = useGameStore.getState().heroes[cid];
+      setHero(cid, { maxHp: h.maxHp + 20, hp: h.hp + 20 });
       useGameStore.setState({ hpUpgradeCost: Math.round(hpUpgradeCost * 1.25) });
     }
+  };
+
+  const handleUpgradeBulletSize = () => {
+    upgradeBulletSize();
   };
 
   // ── Derived values ────────────────────────────────────────────────────────────
@@ -402,7 +427,9 @@ export default function HomeScreen() {
       {/* ── Arena (free 2D, no lanes) ── */}
       <View style={s.arena}>
         {/* Player sprite */}
-        <Text style={[s.sprite, { left: playerPos.x, top: playerPos.y }]}>🧙</Text>
+        <Text style={[s.sprite, { left: playerPos.x, top: playerPos.y }]}>
+          {COMPANIONS[assignedHome ?? 'ironGuard'].emoji}
+        </Text>
 
         {/* Enemy sprite */}
         <Text style={[s.sprite, s.enemySprite, enemy.isBoss && s.bossSprite,
@@ -415,8 +442,11 @@ export default function HomeScreen() {
           <View
             key={b.id}
             style={[s.bullet, {
-              left:            b.x - BULLET_R,
-              top:             b.y - BULLET_R,
+              left:            b.x - b.r,
+              top:             b.y - b.r,
+              width:           b.r * 2,
+              height:          b.r * 2,
+              borderRadius:    b.r,
               backgroundColor: b.fromEnemy ? '#e74c3c' : '#f1c40f',
             }]}
           />
@@ -459,13 +489,19 @@ export default function HomeScreen() {
           <UpgradeBtn
             label="+2 ATK"  sub={`${atkUpgradeCost}G`}
             onPress={handleUpgradeAttack}
-            disabled={hero.gold < atkUpgradeCost}
+            disabled={gold < atkUpgradeCost}
           />
           <View style={{ width: 12 }} />
           <UpgradeBtn
             label="+MAX HP" sub={`${hpUpgradeCost}G`}
             onPress={handleUpgradeHp}
-            disabled={hero.gold < hpUpgradeCost}
+            disabled={gold < hpUpgradeCost}
+          />
+          <View style={{ width: 12 }} />
+          <UpgradeBtn
+            label="BULLET" sub={`${bulletSizeUpgradeCost}G`}
+            onPress={handleUpgradeBulletSize}
+            disabled={gold < bulletSizeUpgradeCost}
           />
         </View>
 

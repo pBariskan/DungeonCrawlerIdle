@@ -23,8 +23,10 @@ function runRound() {
   const s = useGameStore.getState();
   if (!s.dungeonRunning) return;
 
+  const cid = s.assignedCompanions.dungeon ?? 'ironGuard';
+
   // Hero attacks
-  s.damageEnemy(s.hero.attack);
+  s.damageEnemy(s.heroes[cid].attack);
   const afterHeroAtk = useGameStore.getState();
 
   if (afterHeroAtk.enemy.hp <= 0) {
@@ -40,7 +42,8 @@ function runRound() {
     s2.damageHero(s2.enemy.attack);
     const afterEnemyAtk = useGameStore.getState();
 
-    if (afterEnemyAtk.hero.hp <= 0) {
+    const cid2 = afterEnemyAtk.assignedCompanions.dungeon ?? 'ironGuard';
+    if (afterEnemyAtk.heroes[cid2].hp <= 0) {
       handleHeroDied();
       return;
     }
@@ -51,6 +54,7 @@ function runRound() {
 
 function handleEnemyDied(snap: ReturnType<typeof useGameStore.getState>) {
   const level = snap.dungeonLevel;
+  const cid   = snap.assignedCompanions.dungeon ?? 'ironGuard';
 
   snap.addDungeonPendingGold(snap.enemy.goldReward);
 
@@ -60,18 +64,18 @@ function handleEnemyDied(snap: ReturnType<typeof useGameStore.getState>) {
 
   const expGain = snap.enemy.isBoss ? level * 3 : level;
   snap.advanceDungeon();
-  snap.addExp(expGain);
+  snap.addExp(expGain, cid);
 
   // Checkpoint: every 10 floors (compare pre-advance level)
   if (level % 10 === 0) {
     useGameStore.getState().saveCheckpoint();
   }
 
-  // 20% HP heal
-  const h = useGameStore.getState().hero;
-  useGameStore.getState().setHero({
-    hp: Math.min(h.maxHp, h.hp + Math.floor(h.maxHp * 0.20)),
-  });
+  // 20% HP heal for dungeon companion
+  const s2  = useGameStore.getState();
+  const cid2 = s2.assignedCompanions.dungeon ?? 'ironGuard';
+  const h   = s2.heroes[cid2];
+  s2.setHero(cid2, { hp: Math.min(h.maxHp, h.hp + Math.floor(h.maxHp * 0.20)) });
 
   scheduleRound(300);
 }

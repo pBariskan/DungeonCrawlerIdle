@@ -12,7 +12,7 @@ import { stopDungeonCombat } from '../services/dungeonCombat';
 const PIXEL = 'PressStart2P_400Regular';
 
 function GoldDisplay() {
-  const gold = useGameStore(s => s.hero.gold);
+  const gold = useGameStore(s => s.gold);
   return <Text style={{ fontFamily: PIXEL, color: '#f1c40f', fontSize: 8, marginRight: 14 }}>★ {gold}G</Text>;
 }
 
