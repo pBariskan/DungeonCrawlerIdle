@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text } from 'react-native';
+import { Text, TouchableOpacity, Alert } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import HomeScreen from '../screens/HomeScreen';
 import DungeonScreen from '../screens/DungeonScreen';
@@ -7,12 +7,47 @@ import HeroScreen from '../screens/HeroScreen';
 import ShopScreen from '../screens/ShopScreen';
 import ForgeScreen from '../screens/ForgeScreen';
 import { useGameStore } from '../store/gameStore';
+import { stopDungeonCombat } from '../services/dungeonCombat';
 
 const PIXEL = 'PressStart2P_400Regular';
 
 function GoldDisplay() {
   const gold = useGameStore(s => s.hero.gold);
   return <Text style={{ fontFamily: PIXEL, color: '#f1c40f', fontSize: 8, marginRight: 14 }}>★ {gold}G</Text>;
+}
+
+function ResetButton() {
+  const resetGame = useGameStore(s => s.resetGame);
+  const handleReset = () => {
+    Alert.alert(
+      'RESET GAME',
+      'Tüm ilerleme silinecek. Emin misin?',
+      [
+        { text: 'İptal', style: 'cancel' },
+        {
+          text: 'SIFIRLA', style: 'destructive',
+          onPress: () => { stopDungeonCombat(); resetGame(); },
+        },
+      ],
+    );
+  };
+  return (
+    <TouchableOpacity
+      onPress={handleReset}
+      activeOpacity={0.75}
+      style={{
+        marginLeft: 14,
+        width: 32, height: 32,
+        alignItems: 'center', justifyContent: 'center',
+        backgroundColor: '#2a1010',
+        borderTopWidth: 2, borderLeftWidth: 2, borderBottomWidth: 4, borderRightWidth: 4,
+        borderTopColor: '#c0392b', borderLeftColor: '#c0392b',
+        borderBottomColor: '#5a0a0a', borderRightColor: '#5a0a0a',
+      }}
+    >
+      <Text style={{ fontFamily: PIXEL, color: '#e74c3c', fontSize: 14 }}>↺</Text>
+    </TouchableOpacity>
+  );
 }
 
 export type RootTabParamList = {
@@ -45,6 +80,7 @@ export default function TabNavigator() {
         headerStyle: { backgroundColor: '#182848' },
         headerTintColor: '#e0c97f',
         headerTitleStyle: { fontWeight: 'bold' },
+        headerLeft:  () => <ResetButton />,
         headerRight: () => <GoldDisplay />,
       })}
     >

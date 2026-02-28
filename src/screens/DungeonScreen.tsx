@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, Alert, Animated,
+  ScrollView, Animated,
 } from 'react-native';
 import { useGameStore, RARITY_COLOR, type Item } from '../store/gameStore';
 import { startDungeonCombat } from '../services/dungeonCombat';
@@ -126,7 +126,7 @@ export default function DungeonScreen() {
   const {
     hero, enemy, dungeonLevel,
     dungeonRunning, dungeonChestQueue, dungeonDeathFloor, dungeonPendingGold,
-    checkpointFloor, openNextDungeonChest, returnToCheckpoint, resetGame,
+    checkpointFloor, openNextDungeonChest, returnToCheckpoint,
   } = useGameStore();
 
   // Track items from the most recently opened chest to display them
@@ -159,20 +159,6 @@ export default function DungeonScreen() {
     setLastOpenedItems(items ?? null);
   };
 
-  const handleReset = () => {
-    Alert.alert(
-      'RESET GAME',
-      'Tüm ilerleme silinecek. Emin misin?',
-      [
-        { text: 'İptal', style: 'cancel' },
-        {
-          text: 'SIFIRLA', style: 'destructive',
-          onPress: () => { resetGame(); setLastOpenedItems(null); },
-        },
-      ],
-    );
-  };
-
   // ── RUNNING view ─────────────────────────────────────────────────────────────
   if (screenPhase === 'running') {
     return (
@@ -181,9 +167,6 @@ export default function DungeonScreen() {
           <Text style={s.floorLabel}>
             {enemy.isBoss ? '⚡ BOSS ' : 'FLOOR '}{String(dungeonLevel).padStart(2, '0')}
           </Text>
-          <TouchableOpacity style={s.resetBtn} onPress={handleReset} activeOpacity={0.75}>
-            <Text style={s.resetBtnText}>↺</Text>
-          </TouchableOpacity>
         </View>
 
         {checkpointFloor > 1 && (
@@ -239,9 +222,6 @@ export default function DungeonScreen() {
       <View style={s.container}>
         <View style={s.header}>
           <Text style={s.floorLabel}>✖ DEFEATED AT FLOOR {String(dungeonDeathFloor ?? 0).padStart(2, '0')}</Text>
-          <TouchableOpacity style={s.resetBtn} onPress={handleReset} activeOpacity={0.75}>
-            <Text style={s.resetBtnText}>↺</Text>
-          </TouchableOpacity>
         </View>
 
         <ScrollView contentContainerStyle={s.chestScroll}>
@@ -272,9 +252,6 @@ export default function DungeonScreen() {
     <View style={s.container}>
       <View style={s.header}>
         <Text style={s.floorLabel}>DUNGEON</Text>
-        <TouchableOpacity style={s.resetBtn} onPress={handleReset} activeOpacity={0.75}>
-          <Text style={s.resetBtnText}>↺</Text>
-        </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={s.startScroll}>
@@ -326,16 +303,6 @@ const s = StyleSheet.create({
     borderBottomWidth: 2, borderBottomColor: '#3d5ca8',
   },
   floorLabel: { fontFamily: PIXEL, color: '#e0c97f', fontSize: 9, letterSpacing: 2, flex: 1 },
-
-  resetBtn: {
-    width: 32, height: 32,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#2a1010',
-    borderTopWidth: 2, borderLeftWidth: 2, borderBottomWidth: 4, borderRightWidth: 4,
-    borderTopColor: '#c0392b', borderLeftColor: '#c0392b',
-    borderBottomColor: '#5a0a0a', borderRightColor: '#5a0a0a',
-  },
-  resetBtnText: { fontFamily: PIXEL, color: '#e74c3c', fontSize: 14 },
 
   cpBanner: {
     paddingVertical: 6, paddingHorizontal: 20,

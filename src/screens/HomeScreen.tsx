@@ -15,7 +15,7 @@ const ARENA_H    = 216;   // same total height as before (3 × 72)
 const PLAYER_SIZE = 48;
 const ENEMY_SIZE  = 48;
 const BULLET_R    = 6;    // bullet circle radius
-const BULLET_SPD  = 7;    // px per tick
+const BULLET_SPD  = 13;   // px per tick
 const ENEMY_SPD   = 2.2;  // px per tick toward player
 const HIT_RADIUS  = 28;   // collision distance (center-to-center)
 const TICK_MS     = 33;   // ~30 fps
@@ -25,6 +25,11 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 type GamePhase = 'idle' | 'playing' | 'paused' | 'dead';
 
 type Vec2 = { x: number; y: number };
+
+const pickWanderTarget = (): Vec2 => ({
+  x: ARENA_W / 2 + Math.random() * (ARENA_W / 2 - ENEMY_SIZE),
+  y: Math.random() * (ARENA_H - ENEMY_SIZE),
+});
 
 type Bullet2D = {
   id: number;
@@ -141,7 +146,8 @@ export default function HomeScreen() {
   const waveRef      = useRef(1);
   const bulletIdRef  = useRef(0);
   const bulletsRef   = useRef<Bullet2D[]>([]);
-  const lastTouchRef = useRef<Vec2>({ x: 0, y: 0 });
+  const lastTouchRef    = useRef<Vec2>({ x: 0, y: 0 });
+  const wanderTargetRef = useRef<Vec2>(pickWanderTarget());
 
   const gameLoopRef  = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoFireRef  = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -247,6 +253,7 @@ export default function HomeScreen() {
     setEnemyPos(epos);
     bulletsRef.current = [];
     setBullets([]);
+    wanderTargetRef.current = pickWanderTarget();
     startIntervalsFn.current();
   };
 
@@ -292,17 +299,22 @@ export default function HomeScreen() {
       bulletsRef.current = surviving;
       setBullets([...surviving]);
 
-      // Enemy chase player
+      // Enemy chase (right half) or roam (player out of reach)
       const ep = enemyPosRef.current;
       const pp = playerPosRef.current;
-      const d  = Math.hypot(pp.x - ep.x, pp.y - ep.y);
+      const playerReachable = pp.x + PLAYER_SIZE / 2 > ARENA_W / 2;
+      const target = playerReachable ? pp : wanderTargetRef.current;
+      const d = Math.hypot(target.x - ep.x, target.y - ep.y);
       if (d > PLAYER_SIZE * 0.8) {
         const nep = {
-          x: clamp(ep.x + (pp.x - ep.x) / d * ENEMY_SPD, 0, ARENA_W - ENEMY_SIZE),
-          y: clamp(ep.y + (pp.y - ep.y) / d * ENEMY_SPD, 0, ARENA_H - ENEMY_SIZE),
+          x: clamp(ep.x + (target.x - ep.x) / d * ENEMY_SPD, ARENA_W / 2, ARENA_W - ENEMY_SIZE),
+          y: clamp(ep.y + (target.y - ep.y) / d * ENEMY_SPD, 0, ARENA_H - ENEMY_SIZE),
         };
         enemyPosRef.current = nep;
         setEnemyPos({ ...nep });
+      } else if (!playerReachable) {
+        // Wander target'a ulaştı → yeni rastgele hedef seç
+        wanderTargetRef.current = pickWanderTarget();
       }
     }, TICK_MS);
 
@@ -311,10 +323,10 @@ export default function HomeScreen() {
       if (phaseRef.current === 'playing') spawnBulletFn.current(false);
     }, fireCooldownMs);
 
-    // Enemy fire every 2000ms
+    // Enemy fire every 1400ms
     enemyFireRef.current = setInterval(() => {
       if (phaseRef.current === 'playing') spawnBulletFn.current(true);
-    }, 2000);
+    }, 1400);
   };
 
   // Clean up on unmount
@@ -409,6 +421,22 @@ export default function HomeScreen() {
             }]}
           />
         ))}
+
+        {/* Pause overlay on arena */}
+        {phase === 'paused' && (
+          <View style={s.arenaOverlay}>
+            <Text style={s.arenaOverlayText}>⏸ PAUSED</Text>
+          </View>
+        )}
+
+        {/* Death overlay on arena */}
+        {phase === 'dead' && (
+          <View style={s.arenaDeadOverlay}>
+            <Text style={s.arenaDeadSkull}>💀</Text>
+            <Text style={s.arenaDeadText}>GAME OVER</Text>
+            <Text style={s.arenaDeadWave}>WAVE {String(wave).padStart(2, '0')}</Text>
+          </View>
+        )}
       </View>
 
       {/* ── HP bars ── */}
@@ -572,4 +600,41 @@ const s = StyleSheet.create({
     borderTopWidth: 3, borderLeftWidth: 3, borderBottomWidth: 6, borderRightWidth: 6,
   },
   startBtnText: { fontFamily: PIXEL, color: '#fff', fontSize: 7, letterSpacing: 1 },
+
+  arenaOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(8, 12, 30, 0.65)',
+  },
+  arenaOverlayText: {
+    fontFamily: PIXEL,
+    color: '#5a8abf',
+    fontSize: 14,
+    letterSpacing: 3,
+  },
+
+  arenaDeadOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(40, 0, 0, 0.82)',
+  },
+  arenaDeadSkull: {
+    fontSize: 52,
+    marginBottom: 10,
+  },
+  arenaDeadText: {
+    fontFamily: PIXEL,
+    color: '#e74c3c',
+    fontSize: 12,
+    letterSpacing: 3,
+    marginBottom: 8,
+  },
+  arenaDeadWave: {
+    fontFamily: PIXEL,
+    color: '#c0392b',
+    fontSize: 7,
+    letterSpacing: 2,
+  },
 });
