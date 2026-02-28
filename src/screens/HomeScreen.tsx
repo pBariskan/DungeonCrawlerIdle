@@ -1,38 +1,35 @@
 import React, { useRef, useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  Animated, Dimensions,
+  Animated, Dimensions, PanResponder,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useGameStore } from '../store/gameStore';
 
 const { width: SW } = Dimensions.get('window');
-const PIXEL  = 'PressStart2P_400Regular';
-const LANE_H = 72;
+const PIXEL = 'PressStart2P_400Regular';
 
-// Bullet travel range (px from battle area left edge)
-// Player sprite: left:14, width:56 → right edge ~70. Bullet starts just after.
-// Enemy sprite:  right:14, width:56 → left edge ~SW-70. Bullet starts just before.
-const BLT_P_START = 74;        // player bullet X start
-const BLT_P_END   = SW - 88;   // player bullet X end (just before enemy)
-const BLT_E_START = SW - 88;   // enemy bullet X start
-const BLT_E_END   = 74;        // enemy bullet X end (just before player)
-const BLT_P_OFF   = SW + 50;   // player bullet off-screen target (right)
-const BLT_E_OFF   = -50;       // enemy bullet off-screen target (left)
+// ── Game arena: full width, fixed height (replaces 3×72 lanes)
+const ARENA_W    = SW;
+const ARENA_H    = 216;   // same total height as before (3 × 72)
+const PLAYER_SIZE = 48;
+const ENEMY_SIZE  = 48;
+const BULLET_R    = 6;    // bullet circle radius
+const BULLET_SPD  = 7;    // px per tick
+const ENEMY_SPD   = 2.2;  // px per tick toward player
+const HIT_RADIUS  = 28;   // collision distance (center-to-center)
+const TICK_MS     = 33;   // ~30 fps
 
-// Travel durations to the character zone (hit-check moment)
-const TRAVEL_P = 420;   // ms — player bullet
-const TRAVEL_E = 650;   // ms — enemy bullet
-// Full off-screen duration at the SAME velocity (start → off-screen)
-const TOTAL_P  = Math.round(TRAVEL_P * (BLT_P_OFF - BLT_P_START) / (BLT_P_END - BLT_P_START));
-const TOTAL_E  = Math.round(TRAVEL_E * (BLT_E_START - BLT_E_OFF) / (BLT_E_START - BLT_E_END));
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 type GamePhase = 'idle' | 'playing' | 'paused' | 'dead';
 
-type Bullet = {
+type Vec2 = { x: number; y: number };
+
+type Bullet2D = {
   id: number;
-  lane: number;
-  anim: Animated.Value;
+  x: number; y: number;
+  dx: number; dy: number;
   fromEnemy: boolean;
 };
 
@@ -111,16 +108,15 @@ function SmoothBar({ pct, color }: { pct: number; color: string }) {
 }
 const sb = StyleSheet.create({
   track: {
-    alignSelf: 'stretch',
-    height: 10,
-    backgroundColor: '#1a2840',
-    borderRadius: 5,
-    overflow: 'hidden',
-    marginTop: 8,
+    alignSelf: 'stretch', height: 10,
+    backgroundColor: '#1a2840', borderRadius: 5, overflow: 'hidden', marginTop: 8,
   },
   fill: { height: '100%', borderRadius: 5 },
 });
 
+// Initial positions
+const PLAYER_INIT: Vec2 = { x: 20, y: ARENA_H / 2 - PLAYER_SIZE / 2 };
+const enemyInit   = (): Vec2 => ({ x: ARENA_W - ENEMY_SIZE - 20, y: ARENA_H / 2 - ENEMY_SIZE / 2 });
 
 // ── Home Screen ───────────────────────────────────────────────────────────────
 export default function HomeScreen() {
@@ -128,41 +124,111 @@ export default function HomeScreen() {
   const atkUpgradeCost = useGameStore(s => s.atkUpgradeCost);
   const hpUpgradeCost  = useGameStore(s => s.hpUpgradeCost);
 
-  const [phase,      setPhase]      = useState<GamePhase>('idle');
-  const [playerLane, setPlayerLane] = useState(1);
-  const [enemyLane,  setEnemyLane]  = useState(1);
-  const [playerHp,   setPlayerHp]   = useState(hero.maxHp);
-  const [enemy,      setEnemy]      = useState<ShooterEnemy>(() => buildShooterEnemy(1));
-  const [bullets,    setBullets]    = useState<Bullet[]>([]);
-  const [canFire,    setCanFire]    = useState(true);
-  const [wave,       setWave]       = useState(1);
+  const [phase,     setPhase]     = useState<GamePhase>('idle');
+  const [playerPos, setPlayerPos] = useState<Vec2>(PLAYER_INIT);
+  const [enemyPos,  setEnemyPos]  = useState<Vec2>(enemyInit());
+  const [playerHp,  setPlayerHp]  = useState(hero.maxHp);
+  const [enemy,     setEnemy]     = useState<ShooterEnemy>(() => buildShooterEnemy(1));
+  const [bullets,   setBullets]   = useState<Bullet2D[]>([]);
+  const [wave,      setWave]      = useState(1);
 
-  // ── Refs (stale-closure safety) ──────────────────────────────────────────────
-  const playerLaneRef = useRef(1);
-  const enemyLaneRef  = useRef(1);
-  const playerHpRef   = useRef(hero.maxHp);
-  const enemyRef      = useRef<ShooterEnemy>(buildShooterEnemy(1));
-  const phaseRef      = useRef<GamePhase>('idle');
-  const waveRef       = useRef(1);
-  const bulletIdRef   = useRef(0);
-  const canFireRef    = useRef(true);
-  const cooldownAnim  = useRef(new Animated.Value(1)).current;
-  const moveInterval  = useRef<ReturnType<typeof setInterval> | null>(null);
-  const fireInterval  = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Refs
+  const playerPosRef = useRef<Vec2>(PLAYER_INIT);
+  const enemyPosRef  = useRef<Vec2>(enemyInit());
+  const playerHpRef  = useRef(hero.maxHp);
+  const enemyRef     = useRef<ShooterEnemy>(buildShooterEnemy(1));
+  const phaseRef     = useRef<GamePhase>('idle');
+  const waveRef      = useRef(1);
+  const bulletIdRef  = useRef(0);
+  const bulletsRef   = useRef<Bullet2D[]>([]);
+  const lastTouchRef = useRef<Vec2>({ x: 0, y: 0 });
 
-  // Latest-function refs: always-fresh, no stale closures in intervals/animations
+  const gameLoopRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoFireRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  const enemyFireRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Latest-function refs
   const clearIntervalsFn   = useRef<() => void>(() => {});
-  const spawnBulletFn      = useRef<(fromEnemy: boolean) => void>(() => {});
   const startIntervalsFn   = useRef<() => void>(() => {});
   const handleEnemyDeathFn = useRef<() => void>(() => {});
+  const spawnBulletFn      = useRef<(fromEnemy: boolean) => void>(() => {});
 
   // Fire cooldown: levels 1–11+ scale from 800ms → 200ms
   const fireCooldownMs = Math.max(200, 800 - (hero.level - 1) * 60);
 
+  // ── Trackpad PanResponder ────────────────────────────────────────────────────
+  const panResponder = useRef(
+    PanResponder.create({
+      // Accept touch when playing OR paused (paused touch resumes)
+      onStartShouldSetPanResponder: () =>
+        phaseRef.current === 'playing' || phaseRef.current === 'paused',
+      onMoveShouldSetPanResponder: () => phaseRef.current === 'playing',
+
+      onPanResponderGrant: (e) => {
+        lastTouchRef.current = {
+          x: e.nativeEvent.locationX,
+          y: e.nativeEvent.locationY,
+        };
+        // Resume if paused by finger-lift
+        if (phaseRef.current === 'paused') {
+          phaseRef.current = 'playing';
+          setPhase('playing');
+          startIntervalsFn.current();
+        }
+      },
+
+      onPanResponderMove: (e) => {
+        if (phaseRef.current !== 'playing') return;
+        const dx = e.nativeEvent.locationX - lastTouchRef.current.x;
+        const dy = e.nativeEvent.locationY - lastTouchRef.current.y;
+        lastTouchRef.current = {
+          x: e.nativeEvent.locationX,
+          y: e.nativeEvent.locationY,
+        };
+        const nx = clamp(playerPosRef.current.x + dx, 0, ARENA_W - PLAYER_SIZE);
+        const ny = clamp(playerPosRef.current.y + dy, 0, ARENA_H - PLAYER_SIZE);
+        playerPosRef.current = { x: nx, y: ny };
+        setPlayerPos({ x: nx, y: ny });
+      },
+
+      onPanResponderRelease: () => {
+        if (phaseRef.current === 'playing') {
+          phaseRef.current = 'paused';
+          setPhase('paused');
+          clearIntervalsFn.current();
+        }
+      },
+    })
+  ).current;
+
   // ── Assign latest function bodies each render ────────────────────────────────
   clearIntervalsFn.current = () => {
-    if (moveInterval.current) { clearInterval(moveInterval.current); moveInterval.current = null; }
-    if (fireInterval.current) { clearInterval(fireInterval.current); fireInterval.current = null; }
+    if (gameLoopRef.current)  { clearInterval(gameLoopRef.current);  gameLoopRef.current  = null; }
+    if (autoFireRef.current)  { clearInterval(autoFireRef.current);  autoFireRef.current  = null; }
+    if (enemyFireRef.current) { clearInterval(enemyFireRef.current); enemyFireRef.current = null; }
+  };
+
+  spawnBulletFn.current = (fromEnemy: boolean) => {
+    const origin = fromEnemy ? enemyPosRef.current : playerPosRef.current;
+    const sz     = fromEnemy ? ENEMY_SIZE : PLAYER_SIZE;
+    const cx = origin.x + sz / 2;
+    const cy = origin.y + sz / 2;
+
+    let dx: number, dy: number;
+    if (!fromEnemy) {
+      // Player bullets always travel straight right
+      dx = BULLET_SPD;
+      dy = 0;
+    } else {
+      // Enemy bullets aim at player center
+      const tx = playerPosRef.current.x + PLAYER_SIZE / 2;
+      const ty = playerPosRef.current.y + PLAYER_SIZE / 2;
+      const dist = Math.hypot(tx - cx, ty - cy) || 1;
+      dx = (tx - cx) / dist * BULLET_SPD;
+      dy = (ty - cy) / dist * BULLET_SPD;
+    }
+
+    bulletsRef.current = [...bulletsRef.current, { id: ++bulletIdRef.current, x: cx, y: cy, dx, dy, fromEnemy }];
   };
 
   handleEnemyDeathFn.current = () => {
@@ -170,104 +236,93 @@ export default function HomeScreen() {
     const { goldReward, expReward } = enemyRef.current;
     useGameStore.getState().gainGold(goldReward);
     useGameStore.getState().addExp(expReward);
-    const nextWave = waveRef.current + 1;
+    const nextWave  = waveRef.current + 1;
     waveRef.current = nextWave;
     setWave(nextWave);
-    const nextEnemy = buildShooterEnemy(nextWave);
-    enemyRef.current = nextEnemy;
+    const nextEnemy   = buildShooterEnemy(nextWave);
+    enemyRef.current  = nextEnemy;
     setEnemy(nextEnemy);
-    enemyLaneRef.current = 1;
-    setEnemyLane(1);
+    const epos = enemyInit();
+    enemyPosRef.current = epos;
+    setEnemyPos(epos);
+    bulletsRef.current = [];
+    setBullets([]);
     startIntervalsFn.current();
-  };
-
-  spawnBulletFn.current = (fromEnemy: boolean) => {
-    const lane = fromEnemy ? enemyLaneRef.current : playerLaneRef.current;
-    const anim = new Animated.Value(0);
-    const id   = ++bulletIdRef.current;
-
-    setBullets(prev => [...prev, { id, lane, anim, fromEnemy }]);
-
-    // Single constant-speed animation: start → off-screen
-    Animated.timing(anim, {
-      toValue: 1,
-      duration: fromEnemy ? TOTAL_E : TOTAL_P,
-      useNativeDriver: true,
-    }).start(() => {
-      // Bullet exited screen — clean up
-      setBullets(prev => prev.filter(b => b.id !== id));
-    });
-
-    // Hit/miss check fires exactly when the bullet reaches the character zone
-    setTimeout(() => {
-      if (phaseRef.current !== 'playing') return;
-
-      let didHit = false;
-
-      if (!fromEnemy) {
-        if (lane === enemyLaneRef.current) {
-          didHit = true;
-          const atk   = useGameStore.getState().hero.attack;
-          const newHp = Math.max(0, enemyRef.current.hp - atk);
-          enemyRef.current = { ...enemyRef.current, hp: newHp };
-          setEnemy(prev => ({ ...prev, hp: newHp }));
-          if (newHp <= 0) handleEnemyDeathFn.current();
-        }
-      } else {
-        if (lane === playerLaneRef.current) {
-          didHit = true;
-          const def   = useGameStore.getState().hero.defense;
-          const dmg   = Math.max(1, enemyRef.current.attack - def);
-          const newHp = Math.max(0, playerHpRef.current - dmg);
-          playerHpRef.current = newHp;
-          setPlayerHp(newHp);
-          if (newHp <= 0) {
-            clearIntervalsFn.current();
-            phaseRef.current = 'dead';
-            setPhase('dead');
-          }
-        }
-      }
-
-      if (didHit) {
-        // Stop animation at impact and remove bullet
-        anim.stopAnimation();
-        setBullets(prev => prev.filter(b => b.id !== id));
-      }
-      // Miss: animation continues off-screen uninterrupted
-    }, fromEnemy ? TRAVEL_E : TRAVEL_P);
   };
 
   startIntervalsFn.current = () => {
     clearIntervalsFn.current();
 
-    // Enemy movement: drift to adjacent lane every 1500ms
-    moveInterval.current = setInterval(() => {
+    // Game loop: move bullets, collision, enemy chase
+    gameLoopRef.current = setInterval(() => {
       if (phaseRef.current !== 'playing') return;
-      const delta = Math.floor(Math.random() * 3) - 1; // -1, 0, +1
-      const next  = Math.max(0, Math.min(2, enemyLaneRef.current + delta));
-      enemyLaneRef.current = next;
-      setEnemyLane(next);
-    }, 1500);
 
-    // Enemy fires every 2000ms
-    fireInterval.current = setInterval(() => {
-      if (phaseRef.current !== 'playing') return;
-      spawnBulletFn.current(true);
+      // Move bullets + collision check + OOB removal
+      const surviving: Bullet2D[] = [];
+      for (const b of bulletsRef.current.map(b => ({ ...b, x: b.x + b.dx, y: b.y + b.dy }))) {
+        if (b.x < -20 || b.x > ARENA_W + 20 || b.y < -20 || b.y > ARENA_H + 20) continue;
+
+        const tgt = b.fromEnemy ? playerPosRef.current : enemyPosRef.current;
+        const tsz = b.fromEnemy ? PLAYER_SIZE : ENEMY_SIZE;
+        const dist = Math.hypot(b.x - (tgt.x + tsz / 2), b.y - (tgt.y + tsz / 2));
+
+        if (dist < HIT_RADIUS) {
+          if (b.fromEnemy) {
+            const def   = useGameStore.getState().hero.defense;
+            const dmg   = Math.max(1, enemyRef.current.attack - def);
+            const newHp = Math.max(0, playerHpRef.current - dmg);
+            playerHpRef.current = newHp;
+            setPlayerHp(newHp);
+            if (newHp <= 0) {
+              clearIntervalsFn.current();
+              phaseRef.current = 'dead';
+              setPhase('dead');
+            }
+          } else {
+            const atk   = useGameStore.getState().hero.attack;
+            const newHp = Math.max(0, enemyRef.current.hp - atk);
+            enemyRef.current = { ...enemyRef.current, hp: newHp };
+            setEnemy({ ...enemyRef.current });
+            if (newHp <= 0) handleEnemyDeathFn.current();
+          }
+          continue; // bullet consumed
+        }
+        surviving.push(b);
+      }
+      bulletsRef.current = surviving;
+      setBullets([...surviving]);
+
+      // Enemy chase player
+      const ep = enemyPosRef.current;
+      const pp = playerPosRef.current;
+      const d  = Math.hypot(pp.x - ep.x, pp.y - ep.y);
+      if (d > PLAYER_SIZE * 0.8) {
+        const nep = {
+          x: clamp(ep.x + (pp.x - ep.x) / d * ENEMY_SPD, 0, ARENA_W - ENEMY_SIZE),
+          y: clamp(ep.y + (pp.y - ep.y) / d * ENEMY_SPD, 0, ARENA_H - ENEMY_SIZE),
+        };
+        enemyPosRef.current = nep;
+        setEnemyPos({ ...nep });
+      }
+    }, TICK_MS);
+
+    // Player auto-fire (scales with hero level)
+    autoFireRef.current = setInterval(() => {
+      if (phaseRef.current === 'playing') spawnBulletFn.current(false);
+    }, fireCooldownMs);
+
+    // Enemy fire every 2000ms
+    enemyFireRef.current = setInterval(() => {
+      if (phaseRef.current === 'playing') spawnBulletFn.current(true);
     }, 2000);
   };
 
-  // Clean up intervals on unmount
+  // Clean up on unmount
   useEffect(() => () => { clearIntervalsFn.current(); }, []);
 
-  // Pause when leaving tab, resume when returning
+  // Pause on tab blur only; resume happens via trackpad touch
   useFocusEffect(
     React.useCallback(() => {
-      if (phaseRef.current === 'paused') {
-        phaseRef.current = 'playing';
-        setPhase('playing');
-        startIntervalsFn.current();
-      }
       return () => {
         if (phaseRef.current === 'playing') {
           phaseRef.current = 'paused';
@@ -278,63 +333,26 @@ export default function HomeScreen() {
     }, []),
   );
 
-  // ── Event handlers ───────────────────────────────────────────────────────────
+  // ── Event handlers ────────────────────────────────────────────────────────────
   const handleStart = () => {
-    if (phase === 'paused') {
-      phaseRef.current = 'playing';
-      setPhase('playing');
-      startIntervalsFn.current();
-      return;
-    }
     if (phase === 'dead') {
-      const freshHp = useGameStore.getState().hero.maxHp;
-      playerHpRef.current   = freshHp;  setPlayerHp(freshHp);
-      const e1              = buildShooterEnemy(1);
-      enemyRef.current      = e1;       setEnemy(e1);
-      waveRef.current       = 1;        setWave(1);
-      playerLaneRef.current = 1;        setPlayerLane(1);
-      enemyLaneRef.current  = 1;        setEnemyLane(1);
-      setBullets([]);
+      const freshHp       = useGameStore.getState().hero.maxHp;
+      playerHpRef.current = freshHp; setPlayerHp(freshHp);
+      const e1            = buildShooterEnemy(1);
+      enemyRef.current    = e1;      setEnemy(e1);
+      waveRef.current     = 1;       setWave(1);
+      const ppos = { ...PLAYER_INIT };
+      const epos = enemyInit();
+      playerPosRef.current = ppos; setPlayerPos(ppos);
+      enemyPosRef.current  = epos; setEnemyPos(epos);
+      bulletsRef.current   = [];   setBullets([]);
     }
-    phaseRef.current   = 'playing';
+    phaseRef.current = 'playing';
     setPhase('playing');
-    canFireRef.current = true;
-    setCanFire(true);
     startIntervalsFn.current();
   };
 
-  const handleMoveUp = () => {
-    const next = Math.max(0, playerLaneRef.current - 1);
-    playerLaneRef.current = next;
-    setPlayerLane(next);
-  };
-
-  const handleMoveDown = () => {
-    const next = Math.min(2, playerLaneRef.current + 1);
-    playerLaneRef.current = next;
-    setPlayerLane(next);
-  };
-
-  const handleFire = () => {
-    if (!canFireRef.current) return;
-    canFireRef.current = false;
-    setCanFire(false);
-    spawnBulletFn.current(false);
-
-    cooldownAnim.setValue(0);
-    Animated.timing(cooldownAnim, {
-      toValue: 1,
-      duration: fireCooldownMs,
-      useNativeDriver: false,
-    }).start();
-
-    setTimeout(() => {
-      canFireRef.current = true;
-      setCanFire(true);
-    }, fireCooldownMs);
-  };
-
-  // ── Upgrade handlers ─────────────────────────────────────────────────────────
+  // ── Upgrade handlers ──────────────────────────────────────────────────────────
   const handleUpgradeAttack = () => {
     if (spendGold(atkUpgradeCost)) {
       setHero({ attack: useGameStore.getState().hero.attack + 2 });
@@ -349,17 +367,14 @@ export default function HomeScreen() {
     }
   };
 
-  // ── Derived values ───────────────────────────────────────────────────────────
+  // ── Derived values ────────────────────────────────────────────────────────────
   const playerHpPct = Math.max(0, playerHp / Math.max(1, hero.maxHp) * 100);
   const enemyHpPct  = Math.max(0, enemy.hp  / Math.max(1, enemy.maxHp) * 100);
-  const isPlaying   = phase === 'playing';
   const kills       = wave - 1;
 
   const startCfg =
     phase === 'dead'
       ? { label: 'RETRY  WAVE 01', bg: '#6b4a00', hi: '#ffaa44', lo: '#2a1a00' }
-    : phase === 'paused'
-      ? { label: `RESUME WAVE ${String(wave).padStart(2, '0')}`, bg: '#1a3a6b', hi: '#66aaff', lo: '#0a1838' }
     : { label: `START WAVE ${String(wave).padStart(2, '0')}`, bg: '#1a6b1a', hi: '#77ff77', lo: '#0a3010' };
 
   return (
@@ -372,53 +387,28 @@ export default function HomeScreen() {
         <Text style={s.hdrHp}>{playerHp}/{hero.maxHp} HP</Text>
       </View>
 
-      {/* ── Battle area (3 × 72px lanes) ── */}
-      <View style={s.battleArea}>
-
-        {/* Alternating lane backgrounds */}
-        {[0, 1, 2].map(l => (
-          <View key={l} style={[s.lane, { top: l * LANE_H }, l % 2 === 0 && s.laneDark]} />
-        ))}
-
-        {/* Player-lane highlight */}
-        <View
-          pointerEvents="none"
-          style={[s.laneHighlight, { top: playerLane * LANE_H }]}
-        />
-
+      {/* ── Arena (free 2D, no lanes) ── */}
+      <View style={s.arena}>
         {/* Player sprite */}
-        <View style={[s.spriteWrap, { top: playerLane * LANE_H + 8, left: 14 }]}>
-          <Text style={s.sprite}>🧙</Text>
-        </View>
+        <Text style={[s.sprite, { left: playerPos.x, top: playerPos.y }]}>🧙</Text>
 
         {/* Enemy sprite */}
-        <View style={[s.spriteWrap, { top: enemyLane * LANE_H + 8, right: 14 }]}>
-          <Text style={[s.sprite, enemy.isBoss && s.bossSprite]}>{enemy.emoji}</Text>
-        </View>
+        <Text style={[s.sprite, s.enemySprite, enemy.isBoss && s.bossSprite,
+                      { left: enemyPos.x, top: enemyPos.y }]}>
+          {enemy.emoji}
+        </Text>
 
         {/* Bullets */}
-        {bullets.map(b => {
-          const tx = b.anim.interpolate({
-            inputRange:  [0, 1],
-            outputRange: b.fromEnemy
-              ? [BLT_E_START, BLT_E_OFF]
-              : [BLT_P_START, BLT_P_OFF],
-          });
-          return (
-            <Animated.View
-              key={b.id}
-              style={[
-                s.bullet,
-                {
-                  top:             b.lane * LANE_H + 32,
-                  backgroundColor: b.fromEnemy ? '#e74c3c' : '#f1c40f',
-                  transform:       [{ translateX: tx }],
-                },
-              ]}
-            />
-          );
-        })}
-
+        {bullets.map(b => (
+          <View
+            key={b.id}
+            style={[s.bullet, {
+              left:            b.x - BULLET_R,
+              top:             b.y - BULLET_R,
+              backgroundColor: b.fromEnemy ? '#e74c3c' : '#f1c40f',
+            }]}
+          />
+        ))}
       </View>
 
       {/* ── HP bars ── */}
@@ -433,10 +423,10 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* ── Bottom section: upgrade panel (1x) + controls/start (2x) ── */}
+      {/* ── Bottom section ── */}
       <View style={s.bottomSection}>
 
-        {/* ── Upgrade buttons (always visible) ── */}
+        {/* Upgrade buttons */}
         <View style={s.upgradePanel}>
           <UpgradeBtn
             label="+2 ATK"  sub={`${atkUpgradeCost}G`}
@@ -451,76 +441,42 @@ export default function HomeScreen() {
           />
         </View>
 
-        {/* ── Controls or Start/Retry button ── */}
-        {!isPlaying ? (
-          <View style={s.startArea}>
-            {phase === 'dead' && <Text style={s.defeatText}>DEFEATED...</Text>}
-            <TouchableOpacity
-              style={[
-                s.startBtn,
-                {
-                  backgroundColor:   startCfg.bg,
-                  borderTopColor:    startCfg.hi,
-                  borderLeftColor:   startCfg.hi,
-                  borderBottomColor: startCfg.lo,
-                  borderRightColor:  startCfg.lo,
-                },
-              ]}
-              onPress={handleStart}
-              activeOpacity={0.85}
-            >
-              <Text style={s.startBtnText}>{startCfg.label}</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={s.ctrlRow}>
-            {/* LEFT: UP + DOWN stacked — left thumb */}
-            <View style={s.dpadCol}>
+        {/* Controls row: trackpad (playing/paused) or start/retry (idle/dead) */}
+        <View style={s.controlRow}>
+          {phase === 'idle' || phase === 'dead' ? (
+            <View style={s.startArea}>
+              {phase === 'dead' && <Text style={s.defeatText}>DEFEATED</Text>}
               <TouchableOpacity
-                style={[s.dpadBtn, playerLane === 0 && s.dpadBtnOff]}
-                onPress={handleMoveUp}
-                disabled={playerLane === 0}
-                activeOpacity={0.8}
+                style={[
+                  s.startBtn,
+                  {
+                    backgroundColor:   startCfg.bg,
+                    borderTopColor:    startCfg.hi,
+                    borderLeftColor:   startCfg.hi,
+                    borderBottomColor: startCfg.lo,
+                    borderRightColor:  startCfg.lo,
+                  },
+                ]}
+                onPress={handleStart}
+                activeOpacity={0.85}
               >
-                <Text style={[s.dpadTxt, playerLane === 0 && s.dpadTxtDim]}>▲</Text>
-              </TouchableOpacity>
-              <View style={s.dpadGap} />
-              <TouchableOpacity
-                style={[s.dpadBtn, playerLane === 2 && s.dpadBtnOff]}
-                onPress={handleMoveDown}
-                disabled={playerLane === 2}
-                activeOpacity={0.8}
-              >
-                <Text style={[s.dpadTxt, playerLane === 2 && s.dpadTxtDim]}>▼</Text>
+                <Text style={s.startBtnText}>{startCfg.label}</Text>
               </TouchableOpacity>
             </View>
-
-            {/* RIGHT: round FIRE — right thumb */}
-            <View style={s.fireCol}>
-              <TouchableOpacity
-                style={[s.fireBtn, !canFire && s.fireBtnOff]}
-                onPress={handleFire}
-                disabled={!canFire}
-                activeOpacity={0.75}
-              >
-                <Animated.View
-                  pointerEvents="none"
-                  style={[
-                    StyleSheet.absoluteFillObject,
-                    {
-                      backgroundColor: 'rgba(255, 110, 20, 0.45)',
-                      top: cooldownAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: ['100%', '0%'],
-                      }),
-                    },
-                  ]}
-                />
-                <Text style={s.fireBtnEmoji}>🔥</Text>
-              </TouchableOpacity>
+          ) : (
+            // playing or paused — trackpad fills everything
+            <View style={s.trackpad} {...panResponder.panHandlers}>
+              {phase === 'paused' ? (
+                <>
+                  <Text style={s.trackpadPaused}>PAUSED</Text>
+                  <Text style={s.trackpadHint}>TAP TO RESUME</Text>
+                </>
+              ) : (
+                <Text style={s.trackpadHint}>DRAG TO MOVE</Text>
+              )}
             </View>
-          </View>
-        )}
+          )}
+        </View>
 
       </View>
 
@@ -528,7 +484,7 @@ export default function HomeScreen() {
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+// ── Styles ─────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0f1e3a' },
 
@@ -542,34 +498,25 @@ const s = StyleSheet.create({
   hdrKill: { fontFamily: PIXEL, color: '#80a8e0', fontSize: 8, letterSpacing: 1 },
   hdrHp:   { fontFamily: PIXEL, color: '#2ecc71', fontSize: 8, letterSpacing: 1 },
 
-  battleArea: {
-    height: LANE_H * 3,
-    overflow: 'hidden',
+  arena: {
+    width: ARENA_W, height: ARENA_H,
+    backgroundColor: '#0d1b2a',
     borderBottomWidth: 2, borderBottomColor: '#3d5ca8',
-  },
-  lane: {
-    position: 'absolute', left: 0, right: 0,
-    height: LANE_H, backgroundColor: '#152035',
-  },
-  laneDark: { backgroundColor: '#0f1828' },
-
-  laneHighlight: {
-    position: 'absolute', left: 0, right: 0, height: LANE_H,
-    backgroundColor: 'rgba(46,204,113,0.07)',
-    borderTopWidth: 1, borderBottomWidth: 1,
-    borderTopColor: 'rgba(46,204,113,0.2)', borderBottomColor: 'rgba(46,204,113,0.2)',
+    overflow: 'hidden',
   },
 
-  spriteWrap: {
-    position: 'absolute', width: 56, height: 56,
-    alignItems: 'center', justifyContent: 'center',
+  sprite: {
+    position: 'absolute',
+    fontSize: 34,
+    width: PLAYER_SIZE,
+    textAlign: 'center',
   },
-  sprite:     { fontSize: 36 },
-  bossSprite: { fontSize: 44 },
+  enemySprite: { fontSize: 34 },
+  bossSprite:  { fontSize: 42 },
 
   bullet: {
-    position: 'absolute', left: 0,
-    width: 14, height: 8, borderRadius: 4,
+    position: 'absolute',
+    width: BULLET_R * 2, height: BULLET_R * 2, borderRadius: BULLET_R,
   },
 
   hpRow: {
@@ -579,59 +526,50 @@ const s = StyleSheet.create({
     borderBottomWidth: 2, borderBottomColor: '#3d5ca8',
     gap: 20,
   },
-  hpSide:  { flex: 1, alignItems: 'center', gap: 6 },
+  hpSide:  { flex: 1, alignItems: 'center' },
   hpLabel: { fontFamily: PIXEL, color: '#80a8e0', fontSize: 6, letterSpacing: 1 },
 
   bottomSection: { flex: 1 },
   upgradePanel: {
-    flex: 1, flexDirection: 'row', padding: 16,
+    flexDirection: 'row', padding: 12,
     backgroundColor: '#182848',
     borderBottomWidth: 2, borderBottomColor: '#3d5ca8',
   },
 
-  startArea: {
-    flex: 6, alignItems: 'center', justifyContent: 'center',
-    gap: 16, backgroundColor: '#182848',
-  },
-  defeatText:   { fontFamily: PIXEL, color: '#e74c3c', fontSize: 12, letterSpacing: 2 },
-  startBtn: {
-    width: 260, height: 52,
-    alignItems: 'center', justifyContent: 'center',
-    borderTopWidth: 3, borderLeftWidth: 3, borderBottomWidth: 6, borderRightWidth: 6,
-  },
-  startBtnText: { fontFamily: PIXEL, color: '#fff', fontSize: 9, letterSpacing: 2 },
-
-  ctrlRow: {
-    flex: 6, flexDirection: 'row', alignItems: 'stretch',
+  controlRow: {
+    flex: 1,
     backgroundColor: '#182848',
   },
-  // D-pad (left)
-  dpadCol: { flex: 1, flexDirection: 'column', paddingHorizontal: 12, paddingVertical: 10 },
-  dpadGap: { height: 8 },
-  dpadBtn: {
+
+  trackpad: {
     flex: 1,
+    alignSelf: 'stretch',
+    backgroundColor: '#0e1a30',
+    borderTopWidth: 2,
+    borderTopColor: '#2a4a8a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trackpadPaused: {
+    fontFamily: PIXEL, color: '#5a8abf', fontSize: 10, letterSpacing: 2, marginBottom: 8,
+  },
+  trackpadHint: {
+    fontFamily: PIXEL, color: '#2a4a6a', fontSize: 7, letterSpacing: 1,
+  },
+
+  startArea: {
+    flex: 1,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+
+  defeatText: { fontFamily: PIXEL, color: '#e74c3c', fontSize: 9, letterSpacing: 1, marginBottom: 10 },
+  startBtn: {
+    width: '100%', paddingVertical: 14,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#1a3060',
     borderTopWidth: 3, borderLeftWidth: 3, borderBottomWidth: 6, borderRightWidth: 6,
-    borderTopColor: '#5aa0f0', borderLeftColor: '#5aa0f0',
-    borderBottomColor: '#0a1838', borderRightColor: '#0a1838',
   },
-  dpadBtnOff: {
-    backgroundColor: '#1a2040',
-    borderTopColor: '#2a3a60', borderLeftColor: '#2a3a60',
-    borderBottomColor: '#0a1020', borderRightColor: '#0a1020',
-  },
-  dpadTxt:    { fontFamily: PIXEL, color: '#fff', fontSize: 22 },
-  dpadTxtDim: { color: '#3a5080' },
-  // Fire (right)
-  fireCol: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  fireBtn: {
-    width: '88%', aspectRatio: 1, borderRadius: 9999,
-    backgroundColor: '#6b1a0a',
-    borderWidth: 4, borderColor: '#ff7744',
-    alignItems: 'center', justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  fireBtnOff:   { backgroundColor: '#2a1020', borderColor: '#441010' },
-  fireBtnEmoji: { fontSize: 56 },
+  startBtnText: { fontFamily: PIXEL, color: '#fff', fontSize: 7, letterSpacing: 1 },
 });
