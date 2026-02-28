@@ -269,6 +269,11 @@ interface GameState {
   recruitCompanion:    (id: CompanionId) => void;
   assignCompanion:     (mode: 'home' | 'dungeon', id: CompanionId | null) => void;
 
+  // Account level (permanent, not reset by resetGame)
+  accountLevel:    number;
+  accountExp:      number;
+  gainAccountExp:  (amount: number) => void;
+
   // Dungeon auto-run actions
   startDungeonRun:       () => void;
   stopDungeonRun:        (floor: number) => void;
@@ -304,8 +309,10 @@ export const useGameStore = create<GameState>()(
   dungeonChestQueue:  [],
   dungeonDeathFloor:  null,
   dungeonPendingGold: 0,
+  accountLevel: 1,
+  accountExp:   0,
   unlockedCompanions:  ['ironGuard', 'shadowStriker'],
-  assignedCompanions:  { home: 'ironGuard' as CompanionId, dungeon: 'ironGuard' as CompanionId },
+  assignedCompanions:  { home: 'ironGuard' as CompanionId, dungeon: 'shadowStriker' as CompanionId },
 
   setHero: (cid, partial) =>
     set(s => ({ heroes: { ...s.heroes, [cid]: { ...s.heroes[cid], ...partial } } })),
@@ -472,6 +479,15 @@ export const useGameStore = create<GameState>()(
     });
   },
 
+  gainAccountExp: (amount) =>
+    set(s => {
+      let lvl = s.accountLevel;
+      let exp = s.accountExp + amount;
+      const needed = () => 30 * lvl;
+      while (exp >= needed()) { exp -= needed(); lvl += 1; }
+      return { accountLevel: lvl, accountExp: exp };
+    }),
+
   startDungeonRun: () =>
     set({ dungeonRunning: true, dungeonDeathFloor: null, dungeonPendingGold: 0 }),
 
@@ -539,13 +555,15 @@ export const useGameStore = create<GameState>()(
       dungeonDeathFloor:  null,
       dungeonPendingGold: 0,
       unlockedCompanions:  ['ironGuard', 'shadowStriker'],
-      assignedCompanions:  { home: 'ironGuard' as CompanionId, dungeon: 'ironGuard' as CompanionId },
+      assignedCompanions:  { home: 'ironGuard' as CompanionId, dungeon: 'shadowStriker' as CompanionId },
+      accountLevel: 1,
+      accountExp:   0,
     }),
   }),
   {
     name:    'dungeon-crawler-save',
     storage: createJSONStorage(() => AsyncStorage),
-    version: 3,
+    version: 4,
     migrate: (persisted: any, version) => {
       if (version < 2) {
         const BASE_HERO = { hp: 100, maxHp: 100, attack: 10, defense: 5, level: 1 };
@@ -591,6 +609,9 @@ export const useGameStore = create<GameState>()(
           },
         };
       }
+      if (version < 4) {
+        persisted = { ...persisted, accountLevel: 1, accountExp: 0 };
+      }
       return persisted;
     },
     partialize: (s) => ({
@@ -611,6 +632,8 @@ export const useGameStore = create<GameState>()(
       dungeonPendingGold: s.dungeonPendingGold,
       unlockedCompanions:  s.unlockedCompanions,
       assignedCompanions:  s.assignedCompanions,
+      accountLevel:        s.accountLevel,
+      accountExp:          s.accountExp,
     }),
   }
 ));

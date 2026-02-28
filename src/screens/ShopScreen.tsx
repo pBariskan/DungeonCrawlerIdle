@@ -19,6 +19,10 @@ export default function ShopScreen() {
     if (assignedCompanions[mode] === id) {
       assignCompanion(mode, null);
     } else {
+      const otherMode = mode === 'home' ? 'dungeon' : 'home';
+      if (assignedCompanions[otherMode] === id) {
+        assignCompanion(otherMode, null);
+      }
       assignCompanion(mode, id);
     }
   };
@@ -39,6 +43,9 @@ export default function ShopScreen() {
         const homeActive    = assignedCompanions.home    === id;
         const dungeonActive = assignedCompanions.dungeon === id;
 
+        const homeTaken    = !homeActive    && dungeonActive;
+        const dungeonTaken = !dungeonActive && homeActive;
+
         return (
           <View key={id} style={st.card}>
             <Text style={st.cardEmoji}>{c.emoji}</Text>
@@ -52,21 +59,21 @@ export default function ShopScreen() {
 
             <View style={st.assignRow}>
               <TouchableOpacity
-                style={[st.assignBtn, homeActive && st.assignBtnActive]}
+                style={[st.assignBtn, homeActive && st.assignBtnActive, homeTaken && st.assignBtnTaken]}
                 onPress={() => handleAssign('home', id)}
                 activeOpacity={0.8}
               >
-                <Text style={[st.assignText, homeActive && st.assignTextActive]}>
-                  {homeActive ? '✓ HOME' : '○ HOME'}
+                <Text style={[st.assignText, homeActive && st.assignTextActive, homeTaken && st.assignTextTaken]}>
+                  {homeActive ? '✓ HOME' : homeTaken ? '✗ HOME' : '○ HOME'}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[st.assignBtn, dungeonActive && st.assignBtnActive]}
+                style={[st.assignBtn, dungeonActive && st.assignBtnActive, dungeonTaken && st.assignBtnTaken]}
                 onPress={() => handleAssign('dungeon', id)}
                 activeOpacity={0.8}
               >
-                <Text style={[st.assignText, dungeonActive && st.assignTextActive]}>
-                  {dungeonActive ? '✓ DUNGEON' : '○ DUNGEON'}
+                <Text style={[st.assignText, dungeonActive && st.assignTextActive, dungeonTaken && st.assignTextTaken]}>
+                  {dungeonActive ? '✓ DUNGEON' : dungeonTaken ? '✗ DUNGEON' : '○ DUNGEON'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -158,6 +165,12 @@ const st = StyleSheet.create({
   },
   assignText:       { fontFamily: PIXEL, color: '#4a6080', fontSize: 6, letterSpacing: 1 },
   assignTextActive: { color: '#2ecc71' },
+  assignBtnTaken:   {
+    backgroundColor: '#1a1020',
+    borderTopColor: '#2a1a30', borderLeftColor: '#2a1a30',
+    borderBottomColor: '#0a0810', borderRightColor: '#0a0810',
+  },
+  assignTextTaken:  { color: '#5a2a6a' },
 
   goldRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',

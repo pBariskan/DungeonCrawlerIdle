@@ -1,52 +1,62 @@
-import React from 'react';
-import { Text, TouchableOpacity, Alert } from 'react-native';
+import React, { useState } from 'react';
+import { Text, TouchableOpacity, View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import HomeScreen from '../screens/HomeScreen';
 import DungeonScreen from '../screens/DungeonScreen';
 import HeroScreen from '../screens/HeroScreen';
 import ShopScreen from '../screens/ShopScreen';
 import ForgeScreen from '../screens/ForgeScreen';
+import DevScreen from '../screens/DevScreen';
 import { useGameStore } from '../store/gameStore';
-import { stopDungeonCombat } from '../services/dungeonCombat';
 
 const PIXEL = 'PressStart2P_400Regular';
 
 function GoldDisplay() {
   const gold = useGameStore(s => s.gold);
-  return <Text style={{ fontFamily: PIXEL, color: '#f1c40f', fontSize: 8, marginRight: 14 }}>★ {gold}G</Text>;
+  return <Text style={{ fontFamily: PIXEL, color: '#f1c40f', fontSize: 8, marginRight: 14 }}>★ {gold}</Text>;
 }
 
-function ResetButton() {
-  const resetGame = useGameStore(s => s.resetGame);
-  const handleReset = () => {
-    Alert.alert(
-      'RESET GAME',
-      'Tüm ilerleme silinecek. Emin misin?',
-      [
-        { text: 'İptal', style: 'cancel' },
-        {
-          text: 'SIFIRLA', style: 'destructive',
-          onPress: () => { stopDungeonCombat(); resetGame(); },
-        },
-      ],
-    );
-  };
+function DevButton() {
+  const [open, setOpen] = useState(false);
   return (
-    <TouchableOpacity
-      onPress={handleReset}
-      activeOpacity={0.75}
-      style={{
-        marginLeft: 14,
-        width: 32, height: 32,
-        alignItems: 'center', justifyContent: 'center',
-        backgroundColor: '#2a1010',
-        borderTopWidth: 2, borderLeftWidth: 2, borderBottomWidth: 4, borderRightWidth: 4,
-        borderTopColor: '#c0392b', borderLeftColor: '#c0392b',
-        borderBottomColor: '#5a0a0a', borderRightColor: '#5a0a0a',
-      }}
-    >
-      <Text style={{ fontFamily: PIXEL, color: '#e74c3c', fontSize: 14 }}>↺</Text>
-    </TouchableOpacity>
+    <>
+      <TouchableOpacity
+        onPress={() => setOpen(true)}
+        activeOpacity={0.75}
+        style={{
+          marginLeft: 14,
+          width: 32, height: 32,
+          alignItems: 'center', justifyContent: 'center',
+          backgroundColor: '#0e1a38',
+          borderTopWidth: 2, borderLeftWidth: 2, borderBottomWidth: 4, borderRightWidth: 4,
+          borderTopColor: '#3d5ca8', borderLeftColor: '#3d5ca8',
+          borderBottomColor: '#0a1020', borderRightColor: '#0a1020',
+        }}
+      >
+        <Text style={{ fontFamily: PIXEL, color: '#7ec8f7', fontSize: 12 }}>⚙</Text>
+      </TouchableOpacity>
+      <DevScreen visible={open} onClose={() => setOpen(false)} />
+    </>
+  );
+}
+
+function AccountLevelWidget() {
+  const level  = useGameStore(s => s.accountLevel);
+  const exp    = useGameStore(s => s.accountExp);
+  const needed = 30 * level;
+  const pct    = exp / needed;
+  return (
+    <View style={{ marginLeft: 8, justifyContent: 'center' }}>
+      <Text style={{ fontFamily: PIXEL, color: '#e0c97f', fontSize: 7 }}>
+        LV.{level}
+      </Text>
+      <View style={{ width: 64, height: 7, backgroundColor: '#4a3a10',
+                     marginTop: 3, borderRadius: 2, overflow: 'hidden',
+                     borderWidth: 1, borderColor: '#7a6020' }}>
+        <View style={{ width: `${Math.min(100, pct * 100)}%`,
+                       height: '100%', backgroundColor: '#f1c40f', borderRadius: 1 }} />
+      </View>
+    </View>
   );
 }
 
@@ -80,7 +90,12 @@ export default function TabNavigator() {
         headerStyle: { backgroundColor: '#182848' },
         headerTintColor: '#e0c97f',
         headerTitleStyle: { fontWeight: 'bold' },
-        headerLeft:  () => <ResetButton />,
+        headerLeft:  () => (
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <DevButton />
+            <AccountLevelWidget />
+          </View>
+        ),
         headerRight: () => <GoldDisplay />,
       })}
     >

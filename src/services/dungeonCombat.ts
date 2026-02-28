@@ -65,6 +65,7 @@ function handleEnemyDied(snap: ReturnType<typeof useGameStore.getState>) {
   const expGain = snap.enemy.isBoss ? level * 3 : level;
   snap.advanceDungeon();
   snap.addExp(expGain, cid);
+  snap.gainAccountExp(1);
 
   // Checkpoint: every 10 floors (compare pre-advance level)
   if (level % 10 === 0) {

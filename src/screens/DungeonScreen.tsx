@@ -158,6 +158,7 @@ export default function DungeonScreen() {
   const handleOpenChest = () => {
     const items = dungeonChestQueue[0];
     openNextDungeonChest();
+    useGameStore.getState().gainAccountExp(10);
     setLastOpenedItems(items ?? null);
   };
 

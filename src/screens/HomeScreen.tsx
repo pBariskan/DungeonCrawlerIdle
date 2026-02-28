@@ -254,6 +254,7 @@ export default function HomeScreen() {
     clearIntervalsFn.current();
     const { goldReward, expReward } = enemyRef.current;
     useGameStore.getState().gainGold(goldReward);
+    useGameStore.getState().gainAccountExp(1);
     const _homeCid = useGameStore.getState().assignedCompanions.home ?? 'ironGuard';
     useGameStore.getState().addExp(expReward, _homeCid);
     const nextWave  = waveRef.current + 1;
@@ -349,6 +350,14 @@ export default function HomeScreen() {
 
   // Clean up on unmount
   useEffect(() => () => { clearIntervalsFn.current(); }, []);
+
+  // Sync playerHp when store resets (hero.maxHp changes while idle/dead)
+  useEffect(() => {
+    if (phase === 'idle' || phase === 'dead') {
+      playerHpRef.current = hero.maxHp;
+      setPlayerHp(hero.maxHp);
+    }
+  }, [hero.maxHp]);
 
   // Pause on tab blur only; resume happens via trackpad touch
   useFocusEffect(

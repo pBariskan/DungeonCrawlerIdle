@@ -123,7 +123,7 @@ export default function HeroScreen() {
 
   // Stat rows for the 2×2 grid
   const statRows = [
-    { label: 'HP',    value: `${hero.hp}/${hero.maxHp}`, color: '#2ecc71' },
+    { label: 'HP',    value: String(hero.maxHp),          color: '#2ecc71' },
     { label: 'ATK',   value: String(hero.attack),         color: '#e74c3c' },
     { label: 'DEF',   value: String(hero.defense),        color: '#3498db' },
     { label: 'LEVEL', value: String(hero.level),          color: '#e0c97f' },
